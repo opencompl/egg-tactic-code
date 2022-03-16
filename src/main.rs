@@ -1,5 +1,48 @@
 use egg::{rewrite as rw, *};
 
+// #[derive(Debug)]
+// pub struct MatchAST<L> {
+//     target: L
+    
+// }
+// impl<L: Language> CostFunction<L> for MatchAST<L> {
+//     type Cost = usize;
+//     fn cost<C>(&mut self, enode: &L, mut costs: C) -> Self::Cost
+//     where
+//         C: FnMut(Id) -> Self::Cost,
+//     {
+//         if (enode.eq(&self.target)) { return 1; } else { return 100; }
+//     }
+// }
+
+struct SillyCostFn;
+impl CostFunction<SymbolLang> for SillyCostFn {
+    type Cost = f64;
+    fn cost<C>(&mut self, enode: &SymbolLang, mut costs: C) -> Self::Cost
+    where
+        C: FnMut(Id) -> Self::Cost
+    {
+        let op_cost = match enode.op.as_str() {
+            "ANSWER" => 1.0,
+            _ => 100.0
+        };
+        enode.fold(op_cost, |sum, id| sum + costs(id))
+    }
+}
+
+#[derive(Debug)]
+pub struct AstSizeFive;
+impl<L: Language> CostFunction<L> for AstSizeFive {
+    type Cost = usize;
+    fn cost<C>(&mut self, enode: &L, mut costs: C) -> Self::Cost
+    where
+        C: FnMut(Id) -> <egg::AstSize as CostFunction<L>>::Cost,
+    {
+        let tot_size = enode.fold(1, |sum, id| sum + costs(id));
+        println!("tot_size: {}",tot_size);
+        if tot_size == 5 {1} else {100}
+    }
+}
 
 fn main() {
 
@@ -10,11 +53,13 @@ fn main() {
       rw!("one-mul'";  "?a" => "(* 1 ?a)"),
       rw!("inv-left";  "(* (^-1 ?a) ?a)" => "1"),
       rw!("inv-left'";  "1" => "(* (^-1 a) a)"),
+      rw!("inv-left''";  "1" => "(* (^-1 b) b)"),
       rw!("mul-one";  "(* ?a 1)" => "?a"),
       rw!("mul-one'";  "?a" => "(* ?a 1)" ),
       rw!("inv-right";  "(* ?a (^-1 ?a))" => "1"),
       rw!("inv-right'";  "1" => "(* a (^-1 a))"),
-      //rw!("inv-right''";  "1" => "(* b (^-1 b))"),
+      rw!("inv-right''";  "1" => "(* b (^-1 b))"),
+      rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
 
   ];
 
@@ -23,7 +68,7 @@ fn main() {
     //let start = "(* (* a b)(* (^-1 (^-1 1))  (* (^-1 b) (* (* (^-1 a) (^-1 (^-1 (^-1 a)))) a))))".parse().unwrap();
 
     // a⁻¹⁻¹ = a
-    let start = "(^-1 (^-1 a))".parse().unwrap();
+    //let start = "(^-1 (^-1 a))".parse().unwrap();
 
     //  a⁻¹ * (a * b) = b
     //let start = "(* (^-1  a) (* a b))".parse().unwrap();
@@ -32,7 +77,8 @@ fn main() {
     //let start = "(* a (* (^-1  a) b))".parse().unwrap();
 
     //(a * b)⁻¹ = b⁻¹ * a⁻¹
-    //let start = "(^-1 (* a b))".parse().unwrap();
+    let start = "(^-1 (* a b))".parse().unwrap();
+    //let start = "(* 1 (* 1 1))".parse().unwrap();
     //let start = "(* (^-1 b) (^-1 a))".parse().unwrap();
     // it won't get this one!
 
@@ -41,7 +87,7 @@ fn main() {
 
     // That's it! We can run equality saturation now.
     let mut runner = Runner::default()
-        //.with_node_limit(800)
+        //.with_node_limit(20)
         .with_explanations_enabled()
         .with_expr(&start)
         .run(rules);
@@ -53,7 +99,7 @@ fn main() {
 
     // Extractors can take a user-defined cost function,
     // we'll use the egg-provided AstSize for now
-    let extractor = Extractor::new(&runner.egraph, AstSize);
+    let extractor = Extractor::new(&runner.egraph, SillyCostFn);
 
 
     // We want to extract the best expression represented in the
