@@ -43,9 +43,17 @@ elab "myTactic" : tactic =>  do
 --   trace_state
 
 -- TODO: Figure out how to extract hypotheses from goal.
+-- | this problem is egg-complete.
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
-  (dint: Int) (eint: Int), bint = dint := by
- intros a b c d e
+  (dint: Int) (eint: Int) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
+  bint = eint := by
+ intros a b c d e aeqb beqd
+ myTactic
+ sorry
+
+theorem testInstantiation 
+  (group_inv: forall (g: Int), g - g  = 0) 
+  (h: Int) (k: Int): h - h = k - k := by
  myTactic
  sorry
 
