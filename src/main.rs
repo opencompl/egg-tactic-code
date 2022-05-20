@@ -59,7 +59,7 @@ fn main() {
       rw!("inv-right";  "(* ?a (^-1 ?a))" => "1"),
       rw!("inv-right'";  "1" => "(* a (^-1 a))"),
       rw!("inv-right''";  "1" => "(* b (^-1 b))"),
-      rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
+      //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
 
   ];
 
@@ -67,8 +67,11 @@ fn main() {
     //(a * b) * (1⁻¹⁻¹ * b⁻¹ * ((a⁻¹ * a⁻¹⁻¹⁻¹) * a))
     //let start = "(* (* a b)(* (^-1 (^-1 1))  (* (^-1 b) (* (* (^-1 a) (^-1 (^-1 (^-1 a)))) a))))".parse().unwrap();
 
+    // a * 1  -- won't work without 
+    //let start = "(* a 1)".parse().unwrap();
+
     // a⁻¹⁻¹ = a
-    //let start = "(^-1 (^-1 a))".parse().unwrap();
+    let start = "(^-1 (^-1 a))".parse().unwrap();
 
     //  a⁻¹ * (a * b) = b
     //let start = "(* (^-1  a) (* a b))".parse().unwrap();
@@ -77,29 +80,28 @@ fn main() {
     //let start = "(* a (* (^-1  a) b))".parse().unwrap();
 
     //(a * b)⁻¹ = b⁻¹ * a⁻¹
-    let start = "(^-1 (* a b))".parse().unwrap();
+    // let start = "(^-1 (* a b))".parse().unwrap();
     //let start = "(* 1 (* 1 1))".parse().unwrap();
     //let start = "(* (^-1 b) (^-1 a))".parse().unwrap();
-    // it won't get this one!
 
     //(1 : G)⁻¹ = 1
     //let start = "(^-1 1)".parse().unwrap();
 
     // That's it! We can run equality saturation now.
     let mut runner = Runner::default()
-        //.with_node_limit(20)
+        //.with_node_limit(105)
         .with_explanations_enabled()
         .with_expr(&start)
         .run(rules);
 
     // Dump
-    //runner.egraph.dot().to_pdf("target/group.pdf").unwrap();
+    // runner.egraph.dot().to_pdf("target/group.pdf").unwrap();
     //runner.egraph.dot().to_pdf("target/group2.pdf").unwrap();
     //println!("Debug: {:?} \n \n", runner.egraph.dump());
 
     // Extractors can take a user-defined cost function,
     // we'll use the egg-provided AstSize for now
-    let extractor = Extractor::new(&runner.egraph, SillyCostFn);
+    let extractor = Extractor::new(&runner.egraph, AstSize);
 
 
     // We want to extract the best expression represented in the
