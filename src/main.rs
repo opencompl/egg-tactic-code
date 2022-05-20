@@ -3,7 +3,7 @@ use egg::{rewrite as rw, *};
 // #[derive(Debug)]
 // pub struct MatchAST<L> {
 //     target: L
-    
+
 // }
 // impl<L: Language> CostFunction<L> for MatchAST<L> {
 //     type Cost = usize;
@@ -44,7 +44,7 @@ impl<L: Language> CostFunction<L> for AstSizeFive {
     }
 }
 
-fn main() {
+fn mainGroupCheck() {
 
   let rules: &[Rewrite<SymbolLang, ()>] = &[
       rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
@@ -67,7 +67,7 @@ fn main() {
     //(a * b) * (1⁻¹⁻¹ * b⁻¹ * ((a⁻¹ * a⁻¹⁻¹⁻¹) * a))
     //let start = "(* (* a b)(* (^-1 (^-1 1))  (* (^-1 b) (* (* (^-1 a) (^-1 (^-1 (^-1 a)))) a))))".parse().unwrap();
 
-    // a * 1  -- won't work without 
+    // a * 1  -- won't work without
     //let start = "(* a 1)".parse().unwrap();
 
     // a⁻¹⁻¹ = a
@@ -90,7 +90,7 @@ fn main() {
     // That's it! We can run equality saturation now.
     let mut runner = Runner::default()
         //.with_node_limit(105)
-        .with_explanations_enabled()
+        // .with_explanations_enabled()
         .with_expr(&start)
         .run(rules);
 
@@ -101,7 +101,7 @@ fn main() {
 
     // Extractors can take a user-defined cost function,
     // we'll use the egg-provided AstSize for now
-    let extractor = Extractor::new(&runner.egraph, AstSize);
+    let mut extractor = Extractor::new(&runner.egraph, AstSize);
 
 
     // We want to extract the best expression represented in the
@@ -111,6 +111,10 @@ fn main() {
 
 
     println!("Best expr : {:?} -- cost: {}",best_expr, best_cost);
-    println!("{}", runner.explain_equivalence(&start, &best_expr).get_flat_string());
+    // println!("{}", runner.explain_equivalence(&start, &best_expr).get_flat_string());
     // we found the best thing, which is just "a" in this case
+}
+
+fn main() {
+    mainGroupCheck();
 }

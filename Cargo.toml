@@ -1,9 +1,36 @@
 [package]
-name = "egg-test-groups"
-version = "0.1.0"
-edition = "2021"
+name = "egg-herbie"
+version = "0.2.2"
+authors = [ "Oliver Flatt <oflatt@gmail.com>", "Max Willsey <me@mwillsey.com>" ]
+edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egg = "0.7.1"
+egg = "0.6"
+
+log = "0.4"
+indexmap = "1"
+libc = "0.2.71"
+smallvec = "1.4.0"
+
+num-rational = "0.3.0"
+num-integer = "0.1.42"
+num-bigint = "0.3.0"
+num-traits = "0.2.12"
+env_logger = { version = "0.7", default-features = false }
+
+# [features]
+# upward-merging = ["egg/upward-merging"]
+
+[lib]
+name = "egg_math"
+crate-type = ["rlib", "cdylib"]
+
+[profile.test]
+debug = true
+opt-level = 1
+
+[profile.release]
+debug = true
+lto = "fat"
+codegen-units = 1
