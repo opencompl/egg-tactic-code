@@ -1,8 +1,11 @@
 // Code stolen from:
 // https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
-use std::f32::consts::E;
-use std::{io, sync::mpsc::Receiver};
+use indexmap::Equivalent;
+use std::sync::mpsc::Receiver;
+// use std::f32::consts::E;
+use std::{io};
+// use std::{sync::mpsc::Receiver};
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use egg::SymbolLang;
@@ -49,6 +52,40 @@ impl CostFunction<SymbolLang> for SillyCostFn {
         enode.fold(op_cost, |sum, id| sum + costs(id))
     }
 }
+
+pub struct AstTarget {
+    target: RecExpr
+}
+
+impl AstTarget {
+    pub fn new(target: RecExpr) -> Self {
+        AstTarget { target: target }
+    }
+}
+
+
+impl CostFunction<SymbolLang> for AstTarget {
+    type Cost = usize;
+    fn cost<C>(&mut self, enode: &SymbolLang, mut costs: C) -> Self::Cost
+    where
+        // C: FnMut(Id) -> <AstTarget as CostFunction<SymbolLang>>::Cost,
+        C: FnMut(Id) -> usize
+    {
+        // vvv FUCK YOU IF YOU DO THIS.
+        // let mut egraph = EGraph::default();
+        // let root = egraph.add_expr(enode);
+        // let get_first_enode = |id| egraph[id].nodes[0].clone();
+        // let expr2 = get_first_enode(root).build_recexpr(get_first_enode);
+
+
+
+        // let equal : bool = node_rec_expr == self.target;
+        let equal : bool = false;
+        // println!("enode: {} | encode_rec: {} | target: {} | equal? {}", enode, node_rec_expr, self.target, equal);
+        if equal { 1} else {100 }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct AstSizeFive;
@@ -118,7 +155,7 @@ enum Response {
         best: Vec<Comparison>,
     },
     PerformRewrite {
-        cost: usize,
+        success: bool,
         // TODO: how does one use Sexp?
         explanation: Vec<String>
     }
@@ -163,30 +200,45 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 impl State {
     fn handle_request(&mut self, req: Request) -> Response {
         match req {
-            Request::PerformRewrite { rewrites, target_lhs: targetLhs, target_rhs: targetRhs } => {
+            Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
                 let mut new_rewrites = vec![];
                 for rw in rewrites {
                     new_rewrites.push(respond_error!(parse_rewrite(&rw)));
                 }
                 // let targetLhsExpr : Result<RecExpr, _> = respond_error!(targetLhs.parse());
                 // let e : RecExpr = eresult.expect("expected parseable expression");
-                let targetLhsExpr : RecExpr  = respond_error!(targetLhs.parse());
-                let targetRhsExpr : RecExpr  = respond_error!(targetRhs.parse());
+                let target_lhs_expr : RecExpr  = respond_error!(target_lhs.parse());
+                let target_rhs_expr : RecExpr  = respond_error!(target_rhs.parse());
+                let mut graph : EGraph = EGraph::new(()).with_explanations_enabled();
+
+                let lhs_id = graph.add_expr(&target_lhs_expr);
+                let rhs_id = graph.add_expr(&target_rhs_expr);
                 // let e : RecExpr = eresult.expect("expected parseable expression");
                 let mut runner = Runner::default()
+                .with_egraph(graph)
                 //.with_node_limit(105)
                 .with_explanations_enabled()
-                .with_expr(&targetLhsExpr)
                 .run(&new_rewrites);
 
-            // Dump
+                if (runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id)) {
+                    let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
+                        & target_rhs_expr);
+                    let flat_strings = explanation.get_flat_strings();
+                    Response::PerformRewrite { success: true, explanation: flat_strings }
+                } else {
+                    Response::PerformRewrite { success: false, explanation: vec![] }
+
+                }
+                    // Dump
             // runner.egraph.dot().to_pdf("target/group.pdf").unwrap();
             //runner.egraph.dot().to_pdf("target/group2.pdf").unwrap();
             //println!("Debug: {:?} \n \n", runner.egraph.dump());
 
             // Extractors can take a user-defined cost function,
             // we'll use the egg-provided AstSize for now
-            let mut extractor = Extractor::new(&runner.egraph, AstSize);
+            /*
+            let extractor = Extractor::new(&runner.egraph,
+                AstTarget::new(target_rhs_expr));
 
 
             // We want to extract the best expression represented in the
@@ -197,7 +249,7 @@ impl State {
 
             println!("Best expr : {:?} -- cost: {}",best_expr, best_cost);
             let mut explanation : Explanation<SymbolLang> =
-                runner.explain_equivalence(&targetLhsExpr, &best_expr);
+                runner.explain_equivalence(&target_lhs_expr, &best_expr);
             // vv TODO: how to make this work?
             // let flatSexpr : Vec<Sexp>  = explanation.get_flat_sexps();
             let flat_strings : Vec<String>  = explanation.get_flat_strings();
@@ -206,6 +258,7 @@ impl State {
                 cost: best_cost,
                 explanation: flat_strings
             }
+            */
 
             }
             Request::Version => Response::Version {
@@ -246,7 +299,7 @@ impl State {
                 }
 
                 let initial: Vec<(usize, RecExpr)> = {
-                    let mut extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
+                    let  extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
                     let find_best = |&id| extractor.find_best(id);
                     runner.roots.iter().map(find_best).collect()
                 };
@@ -357,7 +410,7 @@ fn main_group_check() {
 
     // Extractors can take a user-defined cost function,
     // we'll use the egg-provided AstSize for now
-    let mut extractor = Extractor::new(&runner.egraph, AstSize);
+    let extractor = Extractor::new(&runner.egraph, AstSize);
 
 
     // We want to extract the best expression represented in the
