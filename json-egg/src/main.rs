@@ -1,4 +1,9 @@
+// Code stolen from:
+// https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
+use std::{io, sync::mpsc::Receiver};
+use std::str::FromStr;
+use serde::{Deserialize, Serialize};
 
 // #[derive(Debug)]
 // pub struct MatchAST<L> {
@@ -13,7 +18,19 @@ use egg::{rewrite as rw, *};
 //     {
 //         if (enode.eq(&self.target)) { return 1; } else { return 100; }
 //     }
+//
 // }
+//
+
+pub type ConstantFold = ();
+pub type Constant = num_rational::BigRational;
+pub type RecExpr = egg::RecExpr<SymbolLang>;
+pub type EGraph = egg::EGraph<SymbolLang, ()>;
+pub type Rewrite = egg::Rewrite<SymbolLang, ()>;
+
+pub type IterData = ();
+pub type Runner = egg::Runner<SymbolLang, (), IterData>;
+pub type Iteration = egg::Iteration<IterData>;
 
 struct SillyCostFn;
 impl CostFunction<SymbolLang> for SillyCostFn {
@@ -44,9 +61,187 @@ impl<L: Language> CostFunction<L> for AstSizeFive {
     }
 }
 
+#[derive(Deserialize)]
+struct RewriteStr {
+    name: String,
+    lhs: String,
+    rhs: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(tag = "request")]
+enum Request {
+    Version,
+    LoadRewrites {
+        rewrites: Vec<RewriteStr>,
+    },
+    SimplifyExpressions {
+        exprs: Vec<String>,
+        #[serde(default = "true_bool")]
+        constant_fold: bool,
+        #[serde(default = "true_bool")]
+        prune: bool,
+    },
+}
+
+fn true_bool() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[serde(tag = "response")]
+enum Response {
+    Error {
+        error: String,
+    },
+    Version {
+        version: String,
+    },
+    LoadRewrites {
+        n: usize,
+    },
+    SimplifyExpressions {
+        iterations: Vec<Iteration>,
+        best: Vec<Comparison>,
+    },
+}
+
+#[derive(Serialize)]
+struct Comparison {
+    initial_expr: RecExpr,
+    initial_cost: usize,
+    final_expr: RecExpr,
+    final_cost: usize,
+}
+
+macro_rules! respond_error {
+    ($e:expr) => {
+        match $e {
+            Ok(ok) => ok,
+            Err(error) => return Response::Error { error },
+        }
+    };
+}
+
+struct State {
+    rewrites: Vec<Rewrite>,
+}
+
+impl Default for State {
+    fn default() -> Self { return State { rewrites: Vec::new()  } }
+}
+
+fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
+    Rewrite::new(
+        // rw.name.clone(),
+        rw.name.clone(),
+        egg::Pattern::from_str(&rw.lhs)
+            .map_err(|err| format!("Failed to parse lhs of {}: '{}'\n{}", rw.name, rw.lhs, err))?,
+        egg::Pattern::from_str(&rw.rhs)
+            .map_err(|err| format!("Failed to parse rhs of {}: '{}'\n{}", rw.name, rw.rhs, err))?,
+    )
+}
+
+impl State {
+    fn handle_request(&mut self, req: Request) -> Response {
+        match req {
+            Request::Version => Response::Version {
+                version: env!("CARGO_PKG_VERSION").into(),
+            },
+            Request::LoadRewrites { rewrites } => {
+                let mut new_rewrites = vec![];
+                for rw in rewrites {
+                    new_rewrites.push(respond_error!(parse_rewrite(&rw)));
+                }
+                self.rewrites = new_rewrites;
+                Response::LoadRewrites {
+                    n: self.rewrites.len(),
+                }
+            }
+            Request::SimplifyExpressions {
+                exprs,
+                constant_fold,
+                prune,
+            } => {
+                if self.rewrites.is_empty() {
+                    return Response::Error {
+                        error: "You haven't loaded any rewrites yet!".into(),
+                    };
+                }
+
+                // let analysis = ConstantFold {
+                //     constant_fold,
+                //     prune,
+                // };
+                // let mut runner = Runner::new(analysis).with_node_limit(10_000);
+                let mut runner = Runner::new(()).with_node_limit(10_000);
+                for expr in exprs {
+                    // let e = respond_error!(expr.parse());
+                    let eresult : Result<RecExpr, _> = expr.parse();
+                    let e : RecExpr = eresult.expect("expected parseable expression");
+                    runner = runner.with_expr(&e);
+                }
+
+                let initial: Vec<(usize, RecExpr)> = {
+                    let mut extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
+                    let find_best = |&id| extractor.find_best(id);
+                    runner.roots.iter().map(find_best).collect()
+                };
+
+                assert!(self.rewrites.len() > 0);
+                runner = runner.run(&self.rewrites);
+
+                let mut extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
+                Response::SimplifyExpressions {
+                    iterations: runner.iterations,
+                    best: runner
+                        .roots
+                        .iter()
+                        .zip(initial)
+                        .map(|(id, (initial_cost, initial_expr))| {
+                            let (final_cost, final_expr) = extractor.find_best(*id);
+                            Comparison {
+                                initial_cost,
+                                initial_expr,
+                                final_cost,
+                                final_expr,
+                            }
+                        })
+                        .collect(),
+                }
+            }
+        }
+    }
+}
+
+fn mainJson() -> io::Result<()> {
+    env_logger::init();
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
+
+    let mut state = State::default();
+
+    for read in deserializer.into_iter() {
+        let response = match read {
+            Err(err) => Response::Error {
+                error: format!("Deserialization error: {}", err),
+            },
+            Ok(req) => state.handle_request(req),
+        };
+        serde_json::to_writer_pretty(&mut stdout, &response)?;
+        println!()
+    }
+
+    Ok(())
+}
+
+
 fn mainGroupCheck() {
 
-  let rules: &[Rewrite<SymbolLang, ()>] = &[
+  let rules: &[Rewrite] = &[
       rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
       rw!("assoc-mul'"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
       rw!("one-mul";  "(* 1 ?a)" => "?a"),
