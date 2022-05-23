@@ -1,3 +1,4 @@
+*.code-*
 /target
 /build
 /lean_packages
