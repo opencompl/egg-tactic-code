@@ -313,4 +313,5 @@ fn mainGroupCheck() {
 fn main() {
     // mainJson();
     mainGroupCheck();
+    mainJson().unwrap();
 }
