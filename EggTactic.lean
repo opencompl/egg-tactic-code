@@ -12,13 +12,24 @@ open Lean.Elab.Term
 def eggServerPath : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
 
 
-elab "myTactic" "[" term,* "]" : tactic =>  do
+#check Lean.Elab.Tactic.elabTerm
+
+elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
   let target <- getMainTarget
   match target.eq? with
   | none =>  throwError "target {target} is not an equality"
   | some (equalityTermType, equalityLhs, equalityRhs) =>
     let maingoal <- getMainGoal
+    -- | elaborate the given hypotheses as equalities.
+    -- These are the rewrites we will perform rewrites with.
+    let hypsGiven : List Expr <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => do
+      let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
+      let tm <- Term.elabTerm rw_stx (Option.some target)
+      return (tm :: accum)
+    )
+
+
     liftMetaTactic fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
       -- let goals <- apply mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
@@ -45,6 +56,7 @@ elab "myTactic" "[" term,* "]" : tactic =>  do
       let out := out ++ m!"-eq.rhs: {equalityRhs}\n"
       let out := out ++ m!"-hypothese of type [eq.t]: {hypsOfEqualityTermType}\n"
       let out := out ++ m!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
+      let out := out ++ m!"-hypotheses given of type [eq.t = eq.t]: {hypsGiven}\n"
       -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
       -- let out := out ++ m!"-mainGoal: {maingoal}\n"
       -- let out := out ++ m!"-goals: {goals}\n"
@@ -60,11 +72,15 @@ elab "myTactic" "[" term,* "]" : tactic =>  do
 
 -- TODO: Figure out how to extract hypotheses from goal.
 -- | this problem is egg-complete.
+def foo : Int := 42
+def bar : 42 = 42 := by { rfl }
+
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   bint = eint := by
  intros a b c d e aeqa aeqb beqd
- myTactic []
+ -- myTactic [bar]
+ myTactic [bar]
  sorry
 
 -- | TODO: figure out how to extract out types like the below.
