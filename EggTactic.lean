@@ -12,7 +12,7 @@ open Lean.Elab.Term
 def eggServerPath : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
 
 
-elab "myTactic" : tactic =>  do
+elab "myTactic" "[" term,* "]" : tactic =>  do
   let goals <- getGoals
   let target <- getMainTarget
   match target.eq? with
@@ -64,17 +64,17 @@ theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   bint = eint := by
  intros a b c d e aeqa aeqb beqd
- myTactic
+ myTactic []
  sorry
 
 -- | TODO: figure out how to extract out types like the below.
 theorem testInstantiation
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
- myTactic
+ myTactic []
  sorry
 
 
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
- myTactic
+ myTactic []
