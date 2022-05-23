@@ -11,7 +11,6 @@ instance : Nonempty S := SPointed.property
 @[extern "lean_S_update_global"] constant updateGlobalS (s : @& S) : IO Unit
 
 
-
 def main : IO Unit := do
   IO.println (mkS 10 20 "hello").addXY
   IO.println (mkS 10 20 "hello").string
