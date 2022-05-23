@@ -1,8 +1,6 @@
 // Code stolen from:
 // https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
-use indexmap::Equivalent;
-use std::sync::mpsc::Receiver;
 // use std::f32::consts::E;
 use std::{io};
 // use std::{sync::mpsc::Receiver};
@@ -37,54 +35,6 @@ pub type Rewrite = egg::Rewrite<SymbolLang, ()>;
 pub type IterData = ();
 pub type Runner = egg::Runner<SymbolLang, (), IterData>;
 pub type Iteration = egg::Iteration<IterData>;
-
-struct SillyCostFn;
-impl CostFunction<SymbolLang> for SillyCostFn {
-    type Cost = f64;
-    fn cost<C>(&mut self, enode: &SymbolLang, mut costs: C) -> Self::Cost
-    where
-        C: FnMut(Id) -> Self::Cost
-    {
-        let op_cost = match enode.op.as_str() {
-            "ANSWER" => 1.0,
-            _ => 100.0
-        };
-        enode.fold(op_cost, |sum, id| sum + costs(id))
-    }
-}
-
-pub struct AstTarget {
-    target: RecExpr
-}
-
-impl AstTarget {
-    pub fn new(target: RecExpr) -> Self {
-        AstTarget { target: target }
-    }
-}
-
-
-impl CostFunction<SymbolLang> for AstTarget {
-    type Cost = usize;
-    fn cost<C>(&mut self, enode: &SymbolLang, mut costs: C) -> Self::Cost
-    where
-        // C: FnMut(Id) -> <AstTarget as CostFunction<SymbolLang>>::Cost,
-        C: FnMut(Id) -> usize
-    {
-        // vvv FUCK YOU IF YOU DO THIS.
-        // let mut egraph = EGraph::default();
-        // let root = egraph.add_expr(enode);
-        // let get_first_enode = |id| egraph[id].nodes[0].clone();
-        // let expr2 = get_first_enode(root).build_recexpr(get_first_enode);
-
-
-
-        // let equal : bool = node_rec_expr == self.target;
-        let equal : bool = false;
-        // println!("enode: {} | encode_rec: {} | target: {} | equal? {}", enode, node_rec_expr, self.target, equal);
-        if equal { 1} else {100 }
-    }
-}
 
 
 #[derive(Debug)]
@@ -176,7 +126,7 @@ fn handle_request(req: Request) -> Response {
             .with_explanations_enabled()
             .run(&new_rewrites);
 
-            if (runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id)) {
+            if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
                 let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
                     & target_rhs_expr);
                 let flat_strings = explanation.get_flat_strings();
