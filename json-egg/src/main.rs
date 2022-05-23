@@ -9,23 +9,6 @@ use serde::{Deserialize, Serialize};
 use egg::SymbolLang;
 use egg::Explanation;
 
-// #[derive(Debug)]
-// pub struct MatchAST<L> {
-//     target: L
-
-// }
-// impl<L: Language> CostFunction<L> for MatchAST<L> {
-//     type Cost = usize;
-//     fn cost<C>(&mut self, enode: &L, mut costs: C) -> Self::Cost
-//     where
-//         C: FnMut(Id) -> Self::Cost,
-//     {
-//         if (enode.eq(&self.target)) { return 1; } else { return 100; }
-//     }
-//
-// }
-//
-
 pub type ConstantFold = ();
 pub type Constant = num_rational::BigRational;
 pub type RecExpr = egg::RecExpr<SymbolLang>;
