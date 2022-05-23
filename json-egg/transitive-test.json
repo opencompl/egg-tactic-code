@@ -1,0 +1,10 @@
+{
+    "request": "perform-rewrite",
+    "target-lhs": "a",
+    "target-rhs": "c",
+    "rewrites": [
+        {"name": "a_eq_b", "lhs": "a" , "rhs": "b"},
+        {"name": "b_eq_c", "lhs": "b" , "rhs": "c"}
+    ]
+    
+}
