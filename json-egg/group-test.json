@@ -1,0 +1,19 @@
+{
+    "request": "perform-rewrite",
+    "target-lhs": "(^-1 (^-1 a))",
+    "target-rhs": "a",
+    "rewrites": [
+        {"name": "assoc-mul", "lhs": "(* ?a (* ?b ?c))" , "rhs": "(* (* ?a ?b) ?c)"},
+        {"name": "assoc-mul'", "lhs": "(* (* ?a ?b) ?c)" , "rhs": "(* ?a (* ?b ?c))" },
+        {"name": "one-mul", "lhs":  "(* 1 ?a)" , "rhs": "?a"},
+        {"name": "one-mul'", "lhs":  "?a" , "rhs": "(* 1 ?a)"},
+        {"name": "inv-left", "lhs":  "(* (^-1 ?a) ?a)" , "rhs": "1"},
+        {"name": "inv-left'", "lhs":  "1" , "rhs": "(* (^-1 a) a)"},
+        {"name": "inv-left''", "lhs":  "1" , "rhs": "(* (^-1 b) b)"},
+        {"name": "mul-one", "lhs":  "(* ?a 1)" , "rhs": "?a"},
+        {"name": "mul-one'", "lhs":  "?a" , "rhs": "(* ?a 1)" },
+        {"name": "inv-right", "lhs":  "(* ?a (^-1 ?a))" , "rhs": "1"},
+        {"name": "inv-right'", "lhs":  "1" , "rhs": "(* a (^-1 a))"},
+        {"name": "inv-right''", "lhs":  "1" , "rhs": "(* b (^-1 b))"}
+    ]
+}

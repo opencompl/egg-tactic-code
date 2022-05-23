@@ -1,9 +1,12 @@
 // Code stolen from:
 // https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
+use std::f32::consts::E;
 use std::{io, sync::mpsc::Receiver};
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
+use egg::SymbolLang;
+use egg::Explanation;
 
 // #[derive(Debug)]
 // pub struct MatchAST<L> {
@@ -76,6 +79,7 @@ enum Request {
     LoadRewrites {
         rewrites: Vec<RewriteStr>,
     },
+    #[serde(rename_all = "kebab-case")]
     SimplifyExpressions {
         exprs: Vec<String>,
         #[serde(default = "true_bool")]
@@ -83,6 +87,13 @@ enum Request {
         #[serde(default = "true_bool")]
         prune: bool,
     },
+
+    #[serde(rename_all = "kebab-case")]
+    PerformRewrite {
+        rewrites: Vec<RewriteStr>,
+        target_lhs: String,
+        target_rhs: String,
+    }
 }
 
 fn true_bool() -> bool {
@@ -106,6 +117,11 @@ enum Response {
         iterations: Vec<Iteration>,
         best: Vec<Comparison>,
     },
+    PerformRewrite {
+        cost: usize,
+        // TODO: how does one use Sexp?
+        explanation: Vec<String>
+    }
 }
 
 #[derive(Serialize)]
@@ -120,7 +136,7 @@ macro_rules! respond_error {
     ($e:expr) => {
         match $e {
             Ok(ok) => ok,
-            Err(error) => return Response::Error { error },
+            Err(error) => return Response::Error { error : error.to_string() },
         }
     };
 }
@@ -147,6 +163,51 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 impl State {
     fn handle_request(&mut self, req: Request) -> Response {
         match req {
+            Request::PerformRewrite { rewrites, target_lhs: targetLhs, target_rhs: targetRhs } => {
+                let mut new_rewrites = vec![];
+                for rw in rewrites {
+                    new_rewrites.push(respond_error!(parse_rewrite(&rw)));
+                }
+                // let targetLhsExpr : Result<RecExpr, _> = respond_error!(targetLhs.parse());
+                // let e : RecExpr = eresult.expect("expected parseable expression");
+                let targetLhsExpr : RecExpr  = respond_error!(targetLhs.parse());
+                let targetRhsExpr : RecExpr  = respond_error!(targetRhs.parse());
+                // let e : RecExpr = eresult.expect("expected parseable expression");
+                let mut runner = Runner::default()
+                //.with_node_limit(105)
+                .with_explanations_enabled()
+                .with_expr(&targetLhsExpr)
+                .run(&new_rewrites);
+
+            // Dump
+            // runner.egraph.dot().to_pdf("target/group.pdf").unwrap();
+            //runner.egraph.dot().to_pdf("target/group2.pdf").unwrap();
+            //println!("Debug: {:?} \n \n", runner.egraph.dump());
+
+            // Extractors can take a user-defined cost function,
+            // we'll use the egg-provided AstSize for now
+            let mut extractor = Extractor::new(&runner.egraph, AstSize);
+
+
+            // We want to extract the best expression represented in the
+            // same e-class as our initial expression, not from the whole e-graph.
+            // Luckily the runner stores the eclass Id where we put the initial expression.
+            let (best_cost, best_expr) = extractor.find_best(runner.roots[0]);
+
+
+            println!("Best expr : {:?} -- cost: {}",best_expr, best_cost);
+            let mut explanation : Explanation<SymbolLang> =
+                runner.explain_equivalence(&targetLhsExpr, &best_expr);
+            // vv TODO: how to make this work?
+            // let flatSexpr : Vec<Sexp>  = explanation.get_flat_sexps();
+            let flat_strings : Vec<String>  = explanation.get_flat_strings();
+            println!("explanation:\n{}", flat_strings.join("\n"));
+            Response::PerformRewrite {
+                cost: best_cost,
+                explanation: flat_strings
+            }
+
+            }
             Request::Version => Response::Version {
                 version: env!("CARGO_PKG_VERSION").into(),
             },
@@ -193,7 +254,7 @@ impl State {
                 assert!(self.rewrites.len() > 0);
                 runner = runner.run(&self.rewrites);
 
-                let mut extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
+                let extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
                 Response::SimplifyExpressions {
                     iterations: runner.iterations,
                     best: runner
@@ -216,7 +277,7 @@ impl State {
     }
 }
 
-fn mainJson() -> io::Result<()> {
+fn main_json() -> io::Result<()> {
     env_logger::init();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -239,7 +300,7 @@ fn mainJson() -> io::Result<()> {
 }
 
 
-fn mainGroupCheck() {
+fn main_group_check() {
 
   let rules: &[Rewrite] = &[
       rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
@@ -312,6 +373,6 @@ fn mainGroupCheck() {
 
 fn main() {
     // mainJson();
-    mainGroupCheck();
-    mainJson().unwrap();
+    main_group_check();
+    main_json().unwrap();
 }
