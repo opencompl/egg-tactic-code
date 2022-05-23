@@ -373,6 +373,7 @@ fn main_group_check() {
 
 fn main() {
     // mainJson();
-    main_group_check();
     main_json().unwrap();
+    // main_group_check();
+
 }
