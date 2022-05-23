@@ -112,19 +112,6 @@ struct RewriteStr {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 #[serde(tag = "request")]
 enum Request {
-    Version,
-    LoadRewrites {
-        rewrites: Vec<RewriteStr>,
-    },
-    #[serde(rename_all = "kebab-case")]
-    SimplifyExpressions {
-        exprs: Vec<String>,
-        #[serde(default = "true_bool")]
-        constant_fold: bool,
-        #[serde(default = "true_bool")]
-        prune: bool,
-    },
-
     #[serde(rename_all = "kebab-case")]
     PerformRewrite {
         rewrites: Vec<RewriteStr>,
@@ -133,40 +120,17 @@ enum Request {
     }
 }
 
-fn true_bool() -> bool {
-    true
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "response")]
 enum Response {
-    Error {
-        error: String,
-    },
-    Version {
-        version: String,
-    },
-    LoadRewrites {
-        n: usize,
-    },
-    SimplifyExpressions {
-        iterations: Vec<Iteration>,
-        best: Vec<Comparison>,
-    },
     PerformRewrite {
         success: bool,
         // TODO: how does one use Sexp?
         explanation: Vec<String>
-    }
-}
-
-#[derive(Serialize)]
-struct Comparison {
-    initial_expr: RecExpr,
-    initial_cost: usize,
-    final_expr: RecExpr,
-    final_cost: usize,
+    },
+    Error { error: String }
 }
 
 macro_rules! respond_error {
@@ -176,14 +140,6 @@ macro_rules! respond_error {
             Err(error) => return Response::Error { error : error.to_string() },
         }
     };
-}
-
-struct State {
-    rewrites: Vec<Rewrite>,
-}
-
-impl Default for State {
-    fn default() -> Self { return State { rewrites: Vec::new()  } }
 }
 
 fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
@@ -197,138 +153,42 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
     )
 }
 
-impl State {
-    fn handle_request(&mut self, req: Request) -> Response {
-        match req {
-            Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
-                let mut new_rewrites = vec![];
-                for rw in rewrites {
-                    new_rewrites.push(respond_error!(parse_rewrite(&rw)));
-                }
-                // let targetLhsExpr : Result<RecExpr, _> = respond_error!(targetLhs.parse());
-                // let e : RecExpr = eresult.expect("expected parseable expression");
-                let target_lhs_expr : RecExpr  = respond_error!(target_lhs.parse());
-                let target_rhs_expr : RecExpr  = respond_error!(target_rhs.parse());
-                let mut graph : EGraph = EGraph::new(()).with_explanations_enabled();
 
-                let lhs_id = graph.add_expr(&target_lhs_expr);
-                let rhs_id = graph.add_expr(&target_rhs_expr);
-                // let e : RecExpr = eresult.expect("expected parseable expression");
-                let mut runner = Runner::default()
-                .with_egraph(graph)
-                //.with_node_limit(105)
-                .with_explanations_enabled()
-                .run(&new_rewrites);
-
-                if (runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id)) {
-                    let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
-                        & target_rhs_expr);
-                    let flat_strings = explanation.get_flat_strings();
-                    Response::PerformRewrite { success: true, explanation: flat_strings }
-                } else {
-                    Response::PerformRewrite { success: false, explanation: vec![] }
-
-                }
-                    // Dump
-            // runner.egraph.dot().to_pdf("target/group.pdf").unwrap();
-            //runner.egraph.dot().to_pdf("target/group2.pdf").unwrap();
-            //println!("Debug: {:?} \n \n", runner.egraph.dump());
-
-            // Extractors can take a user-defined cost function,
-            // we'll use the egg-provided AstSize for now
-            /*
-            let extractor = Extractor::new(&runner.egraph,
-                AstTarget::new(target_rhs_expr));
-
-
-            // We want to extract the best expression represented in the
-            // same e-class as our initial expression, not from the whole e-graph.
-            // Luckily the runner stores the eclass Id where we put the initial expression.
-            let (best_cost, best_expr) = extractor.find_best(runner.roots[0]);
-
-
-            println!("Best expr : {:?} -- cost: {}",best_expr, best_cost);
-            let mut explanation : Explanation<SymbolLang> =
-                runner.explain_equivalence(&target_lhs_expr, &best_expr);
-            // vv TODO: how to make this work?
-            // let flatSexpr : Vec<Sexp>  = explanation.get_flat_sexps();
-            let flat_strings : Vec<String>  = explanation.get_flat_strings();
-            println!("explanation:\n{}", flat_strings.join("\n"));
-            Response::PerformRewrite {
-                cost: best_cost,
-                explanation: flat_strings
+fn handle_request(req: Request) -> Response {
+    match req {
+        Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
+            let mut new_rewrites = vec![];
+            for rw in rewrites {
+                new_rewrites.push(respond_error!(parse_rewrite(&rw)));
             }
-            */
+            // let targetLhsExpr : Result<RecExpr, _> = respond_error!(targetLhs.parse());
+            // let e : RecExpr = eresult.expect("expected parseable expression");
+            let target_lhs_expr : RecExpr  = respond_error!(target_lhs.parse());
+            let target_rhs_expr : RecExpr  = respond_error!(target_rhs.parse());
+            let mut graph : EGraph = EGraph::new(()).with_explanations_enabled();
 
-            }
-            Request::Version => Response::Version {
-                version: env!("CARGO_PKG_VERSION").into(),
-            },
-            Request::LoadRewrites { rewrites } => {
-                let mut new_rewrites = vec![];
-                for rw in rewrites {
-                    new_rewrites.push(respond_error!(parse_rewrite(&rw)));
-                }
-                self.rewrites = new_rewrites;
-                Response::LoadRewrites {
-                    n: self.rewrites.len(),
-                }
-            }
-            Request::SimplifyExpressions {
-                exprs,
-                constant_fold,
-                prune,
-            } => {
-                if self.rewrites.is_empty() {
-                    return Response::Error {
-                        error: "You haven't loaded any rewrites yet!".into(),
-                    };
-                }
+            let lhs_id = graph.add_expr(&target_lhs_expr);
+            let rhs_id = graph.add_expr(&target_rhs_expr);
+            // let e : RecExpr = eresult.expect("expected parseable expression");
+            let mut runner = Runner::default()
+            .with_egraph(graph)
+            //.with_node_limit(105)
+            .with_explanations_enabled()
+            .run(&new_rewrites);
 
-                // let analysis = ConstantFold {
-                //     constant_fold,
-                //     prune,
-                // };
-                // let mut runner = Runner::new(analysis).with_node_limit(10_000);
-                let mut runner = Runner::new(()).with_node_limit(10_000);
-                for expr in exprs {
-                    // let e = respond_error!(expr.parse());
-                    let eresult : Result<RecExpr, _> = expr.parse();
-                    let e : RecExpr = eresult.expect("expected parseable expression");
-                    runner = runner.with_expr(&e);
-                }
+            if (runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id)) {
+                let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
+                    & target_rhs_expr);
+                let flat_strings = explanation.get_flat_strings();
+                Response::PerformRewrite { success: true, explanation: flat_strings }
+            } else {
+                Response::PerformRewrite { success: false, explanation: vec![] }
 
-                let initial: Vec<(usize, RecExpr)> = {
-                    let  extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
-                    let find_best = |&id| extractor.find_best(id);
-                    runner.roots.iter().map(find_best).collect()
-                };
-
-                assert!(self.rewrites.len() > 0);
-                runner = runner.run(&self.rewrites);
-
-                let extractor = egg::Extractor::new(&runner.egraph, egg::AstSize);
-                Response::SimplifyExpressions {
-                    iterations: runner.iterations,
-                    best: runner
-                        .roots
-                        .iter()
-                        .zip(initial)
-                        .map(|(id, (initial_cost, initial_expr))| {
-                            let (final_cost, final_expr) = extractor.find_best(*id);
-                            Comparison {
-                                initial_cost,
-                                initial_expr,
-                                final_cost,
-                                final_expr,
-                            }
-                        })
-                        .collect(),
-                }
             }
         }
     }
 }
+
 
 fn main_json() -> io::Result<()> {
     env_logger::init();
@@ -336,14 +196,13 @@ fn main_json() -> io::Result<()> {
     let mut stdout = io::stdout();
     let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
 
-    let mut state = State::default();
 
     for read in deserializer.into_iter() {
         let response = match read {
             Err(err) => Response::Error {
                 error: format!("Deserialization error: {}", err),
             },
-            Ok(req) => state.handle_request(req),
+            Ok(req) => handle_request(req),
         };
         serde_json::to_writer_pretty(&mut stdout, &response)?;
         println!()
