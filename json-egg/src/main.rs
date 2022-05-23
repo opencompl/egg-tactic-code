@@ -285,7 +285,7 @@ fn mainGroupCheck() {
     // That's it! We can run equality saturation now.
     let mut runner = Runner::default()
         //.with_node_limit(105)
-        // .with_explanations_enabled()
+        .with_explanations_enabled()
         .with_expr(&start)
         .run(rules);
 
@@ -306,10 +306,11 @@ fn mainGroupCheck() {
 
 
     println!("Best expr : {:?} -- cost: {}",best_expr, best_cost);
-    // println!("{}", runner.explain_equivalence(&start, &best_expr).get_flat_string());
+    println!("{}", runner.explain_equivalence(&start, &best_expr).get_flat_string());
     // we found the best thing, which is just "a" in this case
 }
 
 fn main() {
+    // mainJson();
     mainGroupCheck();
 }
