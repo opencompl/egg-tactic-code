@@ -17,7 +17,7 @@ open Lean.Elab.Term
 def egg_server_path : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
 
 #check inferType
-
+#check Syntax
 #check Lean.Elab.Tactic.elabTerm
 
 structure EggRewrite where
@@ -106,7 +106,7 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
   if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
-elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
+elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
   let target <- getMainTarget
   match target.eq? with
@@ -116,6 +116,7 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
     -- | elaborate the given hypotheses as equalities.
     -- These are the rewrites we will perform rewrites with.
     let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => withMainContext do
+      let rw_stx_ident := rw_stx.getId
       let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
       let rw_type <- inferType rw
       match rw_type.eq? with
@@ -131,7 +132,7 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
            let lhs_name := exprToString lctx rw_lhs
            let rhs_name := exprToString lctx rw_rhs
            dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-           let egg_rewrite := { name := toString rw_stx, lhs := toString lhs_name, rhs := toString rhs_name  }
+           let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
            return (egg_rewrite :: accum)
          else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
          f!" Expected to equate terms of type |{equalityTermType}|")
@@ -141,7 +142,7 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
     )
 
 
-    liftMetaTactic fun mvarId => do
+    let explanations : List EggExplanation <- (liftMetaTacticAux fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
       -- let goals <- apply mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
       let lctx <- getLCtx
@@ -228,7 +229,16 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
           | Except.error e => throwTacticEx `myTactic mvarId (e)
           | Except.ok v => pure v
         dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
-      return goals
+        return (explanation, goals))
+
+    for e in explanations do {
+      let lctx <- getLCtx
+      let ldecl := lctx.findFromUserName? e.rule
+      dbg_trace "explanation: {e} | ldecl: {ldecl.map LocalDecl.userName}"
+      -- rewrite (<- getMainGoal) (<- getMainTarget)
+      pure ()
+    }
+    return ()
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
 --   intro h
