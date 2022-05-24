@@ -4,6 +4,9 @@ import Lean.Elab.Tactic.Basic
 import Lean.Elab.Tactic.ElabTerm
 import Lean.Elab.Tactic.Location
 import Lean.Elab.Tactic.Config
+import Lean.Data.Json
+import Lean.Elab.Deriving.FromToJson
+
 open Lean Meta Elab Tactic
 open Lean.Elab.Term
 
@@ -38,9 +41,9 @@ def surround_quotes (s: String): String :=
 
 def EggRewrite.toJson (rewr: EggRewrite) :=
   "{"
-    ++ surround_quotes "name" ++ " = " ++ surround_quotes rewr.name ++ ","
-    ++ surround_quotes "lhs" ++ " = " ++ surround_quotes rewr.lhs ++ ","
-    ++ surround_quotes "rhs" ++ " = " ++ surround_quotes rewr.rhs ++
+    ++ surround_quotes "name" ++ ":" ++ surround_quotes rewr.name ++ ","
+    ++ surround_quotes "lhs" ++ ":" ++ surround_quotes rewr.lhs ++ ","
+    ++ surround_quotes "rhs" ++ ":" ++ surround_quotes rewr.rhs ++
   "}"
 
 instance : ToString EggRewrite where
@@ -54,12 +57,16 @@ structure EggRequest where
 
 def EggRequest.toJson (e: EggRequest): String :=
   "{"
-  ++ surround_quotes "request"  ++  " = " ++ surround_quotes "perform-rewrite" ++ ","
-  ++ surround_quotes "target-lhs"  ++  " = " ++ surround_quotes (e.target_lhs) ++ ","
-  ++ surround_quotes "target-rhs"  ++  " = " ++ surround_quotes (e.target_rhs) ++ ","
-  ++ surround_quotes "rewrites" ++ " = " ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
+  ++ surround_quotes "request"  ++  ":" ++ surround_quotes "perform-rewrite" ++ ","
+  ++ surround_quotes "target-lhs"  ++  ":" ++ surround_quotes (e.target_lhs) ++ ","
+  ++ surround_quotes "target-rhs"  ++  ":" ++ surround_quotes (e.target_rhs) ++ ","
+  ++ surround_quotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
   ++ "}"
 
+def Lean.Json.getStr! (j: Json): String :=
+  match j with
+  | Json.str a => a
+  | _ => toString (f!"[ERROR: expected |{j}| to be a JSON string.]")
 
 def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
@@ -84,9 +91,9 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
          let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
          if is_well_typed
          then
-           let rw_lhs : Expr <- whnf rw_lhs
+          --  let rw_lhs : Expr <- whnf rw_lhs
            let lctx <- getLCtx
-           let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
+          --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
            let lhs_name := exprToString lctx rw_lhs
            let rhs_name := exprToString lctx rw_rhs
            dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
@@ -110,22 +117,23 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
           then return (decl.userName, decl.type) :: accum
           else return accum)
 
-      let hypsOfEquality <- lctx.foldlM (init := []) (fun accum decl =>  do
-          match decl.type.eq? with
-          | none => return accum
-          | some (eqType', _, _) => do
-            let isEqOfCorrectType <- isExprDefEq equalityTermType eqType'
-             -- TODO: extract only if eqType = eqType'.
-             -- Yes I see the irony.
-             if isEqOfCorrectType
-             then return (decl.userName, decl.value) :: accum
-             else return accum)
+      -- let hypsOfEquality <- lctx.foldlM (init := []) (fun accum decl =>  do
+      --     match decl.type.eq? with
+      --     | none => return accum
+      --     | some (eqType', _, _) => do
+      --       let isEqOfCorrectType <- isExprDefEq equalityTermType eqType'
+      --        -- TODO: extract only if eqType = eqType'.
+      --        -- Yes I see the irony.
+      --        if isEqOfCorrectType
+      --        -- | accessing decl.value sometimes creates a panic.
+      --        then return (decl.userName, decl.value) :: accum
+      --        else return accum)
       let out := "\n====\n"
       let out := out ++ f!"-eq.t: {equalityTermType}\n"
       let out := out ++ f!"-eq.lhs: {equalityLhs} / {exprToString lctx equalityLhs}\n"
       let out := out ++ f!"-eq.rhs: {equalityRhs} / {exprToString lctx equalityRhs}\n"
       let out := out ++ f!"-hypothese of type [eq.t]: {hypsOfEqualityTermType}\n"
-      let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
+      -- let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
       let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
       -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
       -- let out := out ++ m!"-mainGoal: {maingoal}\n"
@@ -146,7 +154,8 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
       let egg_server_process <- IO.Process.spawn
         { cmd := egg_server_path,
           stdin := IO.Process.Stdio.piped,
-          stdout := IO.Process.Stdio.piped
+          stdout := IO.Process.Stdio.piped,
+          stderr := IO.Process.Stdio.null
         }
       dbg_trace "3) Spanwed egg server process. Writing stdin..."
       let (stdin, egg_server_process) ← egg_server_process.takeStdin
@@ -162,6 +171,17 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
       dbg_trace "8) read stdout."
       -- let stdout : String := "STDOUT"
       dbg_trace ("9)stdout:\n" ++ stdout)
+      let out_json : Json <- match Json.parse stdout with
+        | Except.error e => throwTacticEx `myTactic mvarId e
+        | Except.ok j => pure j
+      dbg_trace ("10)stdout as json:\n" ++ (toString out_json))
+      let response_type := (out_json.getObjValD "response").getStr!
+      dbg_trace ("11)stdout response: |" ++ response_type ++ "|")
+      if response_type == "error"
+      then
+        throwTacticEx `myTactic mvarId (toString out_json)
+      else
+        dbg_trace "12) success?"
       return goals
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
