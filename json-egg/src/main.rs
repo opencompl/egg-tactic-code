@@ -61,7 +61,7 @@ enum Response {
     PerformRewrite {
         success: bool,
         // TODO: how does one use Sexp?
-        explanation: Vec<String>
+        explanation: Vec<(String, String)>
     },
     Error { error: String }
 }
@@ -86,6 +86,25 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
     )
 }
 
+
+// Extract the rule as forward/backward from the flat term.
+// This is used to run the rules from our Lean engine.
+fn extract_rule_from_flat_term<L : Language>(t: &FlatTerm<L>) -> Option<(String, String)> {
+    match (t.forward_rule, t.backward_rule){
+        (Some(rule), _) => Some(("fwd".to_string(), rule.as_str().to_string())),
+        (_, Some(rule)) => Some(("bwd".to_string(), rule.as_str().to_string())),
+        (None, None) => {
+            for c in &t.children {
+                match extract_rule_from_flat_term(&c) {
+                    Some(rule) => return Some(rule),
+                    None => ()
+                }
+            }
+            return None
+        }
+    }
+
+}
 
 fn handle_request(req: Request) -> Response {
     match req {
@@ -112,8 +131,23 @@ fn handle_request(req: Request) -> Response {
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
                 let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
                     & target_rhs_expr);
-                let flat_strings = explanation.get_flat_strings();
-                Response::PerformRewrite { success: true, explanation: flat_strings }
+                let flat_explanation : &FlatExplanation<SymbolLang> =
+                    explanation.make_flat_explanation();
+
+                let mut rule_names : Vec<(String,String)> = Vec::new();
+
+                // println!("iterating on the flat explanation \n{:?}\n..", flat_explanation);
+                for e in flat_explanation {
+                    let rule = extract_rule_from_flat_term(e);
+                    eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
+                    match rule  {
+                        Some(r) => {
+                            rule_names.push(r);
+                        }
+                        None => ()
+                    }
+                }
+                Response::PerformRewrite { success: true, explanation: rule_names }
             } else {
                 Response::PerformRewrite { success: false, explanation: vec![] }
 
