@@ -110,8 +110,12 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
 elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
   let target <- getMainTarget
-  match target.eq? with
-  | none =>  throwError "target {target} is not an equality"
+  -- let (target_newMVars, target_binderInfos, target_eq_type) ← forallMetaTelescopeReducing target
+  --  Use the helpers to match because it puts stuff in WHNF
+  match (<- matchEq? target) with
+  | none => do
+    dbg_trace f!"target is not an equality: |{target}|"
+    throwError "target {target} is not an equality"
   | some (equalityTermType, equalityLhs, equalityRhs) =>
     let maingoal <- getMainGoal
     -- | elaborate the given hypotheses as equalities.
@@ -120,7 +124,7 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       let rw_stx_ident := rw_stx.getId
       let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
       let rw_type <- inferType rw
-      match rw_type.eq? with
+      match (<- matchEq? rw_type) with
       | none => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
       | some (rw_eq_type, rw_lhs, rw_rhs) => do
          -- | check that rewrite is of the correct type.
@@ -284,15 +288,16 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
 
 
 
-/-
+
 -- | TODO: figure out how to extract out types like the below.
 theorem testInstantiation
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
- myTactic []
- sorry
+ have gh := group_inv h
+ have gk := group_inv k
+ myTactic [gh, gk]
 
-
+/-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
  myTactic []
