@@ -9,7 +9,7 @@ open Lean.Elab.Term
 
 
 -- Path to the egg server.
-def eggServerPath : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
+def egg_server_path : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
 
 #check inferType
 
@@ -20,16 +20,50 @@ structure EggRewrite where
   lhs: String
   rhs: String
 
-def surroundQuotes (s: String): String :=
+
+-- | Actually do the IO. This incurs an `unsafe`.
+unsafe def unsafePerformIO [Inhabited a] (io: IO a): a :=
+  match unsafeIO io with
+  | Except.ok a    =>  a
+  | Except.error e => panic! "expected io computation to never fail"
+
+-- | Circumvent the `unsafe` by citing an `implementedBy` instance.
+@[implementedBy unsafePerformIO]
+def performIO [Inhabited a] (io: IO a): a := Inhabited.default
+
+
+def surround_quotes (s: String): String :=
  "\"" ++ s ++ "\""
 
+
+def EggRewrite.toJson (rewr: EggRewrite) :=
+  "{"
+    ++ surround_quotes "name" ++ " = " ++ surround_quotes rewr.name ++ ","
+    ++ surround_quotes "lhs" ++ " = " ++ surround_quotes rewr.lhs ++ ","
+    ++ surround_quotes "rhs" ++ " = " ++ surround_quotes rewr.rhs ++
+  "}"
+
 instance : ToString EggRewrite where
-  toString rewr :=
-    "{"
-      ++ surroundQuotes "name" ++ " = " ++ surroundQuotes rewr.name ++ ","
-      ++ surroundQuotes "lhs" ++ " = " ++ surroundQuotes rewr.lhs ++ ","
-      ++ surroundQuotes "rhs" ++ " = " ++ surroundQuotes rewr.rhs ++
-    "}"
+  toString rewr := rewr.toJson
+
+
+structure EggRequest where
+  target_lhs: String
+  target_rhs: String
+  rewrites: List EggRewrite
+
+def EggRequest.toJson (e: EggRequest): String :=
+  "{"
+  ++ surround_quotes "request"  ++  " = " ++ surround_quotes "perform-rewrite" ++ ","
+  ++ surround_quotes "target-lhs"  ++  " = " ++ surround_quotes (e.target_lhs) ++ ","
+  ++ surround_quotes "target-rhs"  ++  " = " ++ surround_quotes (e.target_rhs) ++ ","
+  ++ surround_quotes "rewrites" ++ " = " ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
+  ++ "}"
+
+
+def exprToString (lctx: LocalContext) (e: Expr) : Format :=
+  -- (repr e)
+  if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
 elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
@@ -40,7 +74,7 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
     let maingoal <- getMainGoal
     -- | elaborate the given hypotheses as equalities.
     -- These are the rewrites we will perform rewrites with.
-    let hypsGiven : List EggRewrite <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => withMainContext do
+    let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => withMainContext do
       let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
       let rw_type <- inferType rw
       match rw_type.eq? with
@@ -53,11 +87,9 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
            let rw_lhs : Expr <- whnf rw_lhs
            let lctx <- getLCtx
            let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
-           let exprToString := fun (e: Expr) =>
-              if e.isFVar then toString (lctx.getFVar! e).userName else toString e
-           let lhs_name := exprToString rw_lhs
-           let rhs_name := exprToString rw_rhs
-           dbg_trace "rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rw_rhs}"
+           let lhs_name := exprToString lctx rw_lhs
+           let rhs_name := exprToString lctx rw_rhs
+           dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
            let egg_rewrite := { name := toString rw_stx, lhs := toString lhs_name, rhs := toString rhs_name  }
            return (egg_rewrite :: accum)
          else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
@@ -89,18 +121,47 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
              then return (decl.userName, decl.value) :: accum
              else return accum)
       let out := "\n====\n"
-      let out := out ++ m!"-eq.t: {equalityTermType}\n"
-      let out := out ++ m!"-eq.lhs: {equalityLhs}\n"
-      let out := out ++ m!"-eq.rhs: {equalityRhs}\n"
-      let out := out ++ m!"-hypothese of type [eq.t]: {hypsOfEqualityTermType}\n"
-      let out := out ++ m!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
-      let out := out ++ m!"-hypotheses given of type [eq.t = eq.t]: {hypsGiven}\n"
+      let out := out ++ f!"-eq.t: {equalityTermType}\n"
+      let out := out ++ f!"-eq.lhs: {equalityLhs} / {exprToString lctx equalityLhs}\n"
+      let out := out ++ f!"-eq.rhs: {equalityRhs} / {exprToString lctx equalityRhs}\n"
+      let out := out ++ f!"-hypothese of type [eq.t]: {hypsOfEqualityTermType}\n"
+      let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
+      let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
       -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
       -- let out := out ++ m!"-mainGoal: {maingoal}\n"
       -- let out := out ++ m!"-goals: {goals}\n"
       -- let out := out ++ m!"-target: {target}\n"
       let out := out ++ "\n====\n"
-      throwTacticEx `myTactic mvarId out
+      -- throwTacticEx `myTactic mvarId out
+      dbg_trace out
+      -- | forge a request.
+      let req : EggRequest := {
+        target_lhs := toString (exprToString lctx equalityLhs)
+        , target_rhs := toString (exprToString lctx equalityRhs)
+        , rewrites := egg_rewrites}
+      -- | Invoke accursed magic to send the request.
+      let req_json : String := req.toJson
+      -- | Steal code from |IO.Process.run|
+      dbg_trace "2) sending request |{egg_server_path} {req_json}|"
+      let egg_server_process <- IO.Process.spawn
+        { cmd := egg_server_path,
+          stdin := IO.Process.Stdio.piped,
+          stdout := IO.Process.Stdio.piped
+        }
+      dbg_trace "3) Spanwed egg server process. Writing stdin..."
+      let (stdin, egg_server_process) ← egg_server_process.takeStdin
+      stdin.putStr req_json
+      dbg_trace "4) Wrote stdin. Flushing..."
+      stdin.flush
+      dbg_trace "5) Flushed stdin. Setting up stdout..."
+      let stdout ← IO.asTask egg_server_process.stdout.readToEnd Task.Priority.dedicated
+      dbg_trace "6) Setup stdout. Waiting for exitCode..."
+      let exitCode : UInt32 <- egg_server_process.wait
+      dbg_trace "7) got exitCode ({exitCode}). Waiting for stdout..."
+      let stdout : String <- IO.ofExcept stdout.get
+      dbg_trace "8) read stdout."
+      -- let stdout : String := "STDOUT"
+      dbg_trace ("9)stdout:\n" ++ stdout)
       return goals
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
