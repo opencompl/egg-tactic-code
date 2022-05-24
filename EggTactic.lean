@@ -238,13 +238,14 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       let ldecl <- match lctx.findFromUserName? e.rule with
         | some ldecl => pure ldecl
         | none => throwTacticEx `myTactic (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl.toExpr else pure (ldecl.toExpr)
       -- dbg_trace "explanation: {e} | ldecl: {ldecl.userName}"
       -- | Code stolen from Lean.Elab.Tactic.Rewrite
-      let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl.toExpr
+      let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
       let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
       replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
     }
-    evalTactic (← `(tactic| try rfl))
+    Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
     return ()
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
@@ -259,6 +260,7 @@ def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
 
+-- | test that we can run rewrites
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   bint = eint := by
@@ -268,6 +270,19 @@ theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
  myTactic [beqd, deqe]
 
 #print testSuccess
+
+-- | test that we can run theorems in reverse.
+theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
+  (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
+  eint = bint := by
+ intros a b c d e aeqa beqd deqe
+--  myTactic [not_rewrite]
+--  myTactic [rewrite_wrong_type]
+ myTactic [beqd, deqe]
+
+#print testSuccessRev
+
+
 
 /-
 -- | TODO: figure out how to extract out types like the below.
