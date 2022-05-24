@@ -1,6 +1,7 @@
 import Lean.Meta.Tactic.Rewrite
 import Lean.Meta.Tactic.Replace
 import Lean.Elab.Tactic.Basic
+import Lean.Elab.Tactic.Rewrite
 import Lean.Elab.Tactic.ElabTerm
 import Lean.Elab.Tactic.Location
 import Lean.Elab.Tactic.Config
@@ -233,11 +234,17 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
 
     for e in explanations do {
       let lctx <- getLCtx
-      let ldecl := lctx.findFromUserName? e.rule
-      dbg_trace "explanation: {e} | ldecl: {ldecl.map LocalDecl.userName}"
-      -- rewrite (<- getMainGoal) (<- getMainTarget)
-      pure ()
+      dbg_trace (f!"14) aplying rewrite {e}")
+      let ldecl <- match lctx.findFromUserName? e.rule with
+        | some ldecl => pure ldecl
+        | none => throwTacticEx `myTactic (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      -- dbg_trace "explanation: {e} | ldecl: {ldecl.userName}"
+      -- | Code stolen from Lean.Elab.Tactic.Rewrite
+      let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl.toExpr
+      let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
+      replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
     }
+    evalTactic (← `(tactic| try rfl))
     return ()
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
@@ -259,8 +266,10 @@ theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
 --  myTactic [not_rewrite]
 --  myTactic [rewrite_wrong_type]
  myTactic [beqd, deqe]
- sorry
 
+#print testSuccess
+
+/-
 -- | TODO: figure out how to extract out types like the below.
 theorem testInstantiation
   (group_inv: forall (g: Int), g - g  = 0)
@@ -272,3 +281,5 @@ theorem testInstantiation
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
  myTactic []
+ sorry
+-/
