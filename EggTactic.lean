@@ -68,6 +68,12 @@ def Lean.Json.getStr! (j: Json): String :=
   | Json.str a => a
   | _ => toString (f!"[ERROR: expected |{j}| to be a JSON string.]")
 
+def Lean.Json.getArr! (j: Json): Array Json :=
+  match j with
+  | Json.arr a => a
+  | _ => #[]
+
+
 def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
   if e.isFVar then toString (lctx.getFVar! e).userName else toString e
@@ -153,22 +159,22 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
       dbg_trace "2) sending request |{egg_server_path} {req_json}|"
       let egg_server_process <- IO.Process.spawn
         { cmd := egg_server_path,
-          stdin := IO.Process.Stdio.piped,
+          -- stdin := IO.Process.Stdio.piped,
           stdout := IO.Process.Stdio.piped,
+          stdin := IO.Process.Stdio.piped,
+          -- stdout := IO.Process.Stdio.null,
           stderr := IO.Process.Stdio.null
         }
       dbg_trace "3) Spanwed egg server process. Writing stdin..."
       let (stdin, egg_server_process) ← egg_server_process.takeStdin
       stdin.putStr req_json
-      dbg_trace "4) Wrote stdin. Flushing..."
-      stdin.flush
-      dbg_trace "5) Flushed stdin. Setting up stdout..."
+      dbg_trace "5) Wrote stdin. Setting up stdout..."
       let stdout ← IO.asTask egg_server_process.stdout.readToEnd Task.Priority.dedicated
       dbg_trace "6) Setup stdout. Waiting for exitCode..."
       let exitCode : UInt32 <- egg_server_process.wait
       dbg_trace "7) got exitCode ({exitCode}). Waiting for stdout..."
       let stdout : String <- IO.ofExcept stdout.get
-      dbg_trace "8) read stdout."
+      -- dbg_trace "8) read stdout."
       -- let stdout : String := "STDOUT"
       dbg_trace ("9)stdout:\n" ++ stdout)
       let out_json : Json <- match Json.parse stdout with
@@ -181,7 +187,9 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
       then
         throwTacticEx `myTactic mvarId (toString out_json)
       else
-        dbg_trace "12) success?"
+        dbg_trace "12) Creating explanation..."
+        let explanation : List String := ((out_json.getObjValD "explanation").getArr!.map Lean.Json.getStr!).toList
+        dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " explanation ++ "|")
       return goals
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
