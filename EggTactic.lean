@@ -11,6 +11,8 @@ open Lean Meta Elab Tactic
 open Lean.Elab.Term
 
 
+
+
 -- Path to the egg server.
 def egg_server_path : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
 
@@ -23,6 +25,32 @@ structure EggRewrite where
   lhs: String
   rhs: String
 
+inductive EggRewriteDirection where
+  | Forward
+  | Backward
+  deriving Inhabited, DecidableEq
+
+open EggRewriteDirection
+
+structure EggExplanation where
+  direction: EggRewriteDirection -- direction of the rewrite
+  rule: String -- name of the rewrite rule
+
+instance : ToString EggExplanation where
+  toString expl :=
+    let dir := if expl.direction == Forward then "fwd" else "bwd"
+    toString f!"[{dir}, {expl.rule}]"
+
+-- | parse a fragment of an explanation into an EggRewrite
+def parseExplanation (j: Json) : Except String EggExplanation := do
+  let l <- j.getArr?
+  let ty <- l[0].getStr?
+  let d <- match ty with
+  | "fwd" => pure Forward
+  | "bwd" => pure Backward
+  | other => throw (toString f!"unknown direction {other} in |{j}")
+  let r <- l[1].getStr?
+  return { direction := d, rule := r}
 
 -- | Actually do the IO. This incurs an `unsafe`.
 unsafe def unsafePerformIO [Inhabited a] (io: IO a): a :=
@@ -188,8 +216,18 @@ elab "myTactic" "[" rewrites:term,* "]" : tactic =>  withMainContext  do
         throwTacticEx `myTactic mvarId (toString out_json)
       else
         dbg_trace "12) Creating explanation..."
-        let explanation : List String := ((out_json.getObjValD "explanation").getArr!.map Lean.Json.getStr!).toList
-        dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " explanation ++ "|")
+        let explanationE : Except String (List EggExplanation) := do
+           -- extract explanation field from response
+           let expl <- (out_json.getObjVal? "explanation")
+           -- cast field to array
+           let expl <- Json.getArr? expl
+           -- map over each element into an explanation
+           let expl <- expl.mapM parseExplanation
+           return expl.toList
+        let explanation <- match explanationE with
+          | Except.error e => throwTacticEx `myTactic mvarId (e)
+          | Except.ok v => pure v
+        dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
       return goals
 
 -- theorem test {p: Prop} : (p ∨ p) -> p := by
