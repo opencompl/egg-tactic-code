@@ -110,8 +110,21 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   surround_escaped_quotes $
     if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
-def instantiateArrow (rw : Expr) (lctx : LocalContext) : List EggRewrite :=
-  []
+def findMatchingExprs (t : Expr) (lctx : LocalContext) : List Expr :=
+  [] -- TODO : implement
+
+partial def instantiateArrow (rw : Expr) (lctx : LocalContext) : List EggRewrite :=
+  --let rw_type <- inferType rw
+  -- end recursion
+  match rw.eq?  with
+    | some (rw_eq_type, rw_lhs, rw) => [] -- TODO: here add the functionality below to add instances with all applications
+    | none =>
+       match rw with
+        | Expr.forallE n t b _ =>
+          let possibleInsts : List Expr := findMatchingExprs t lctx
+          let applyInsts : List (List EggRewrite) := possibleInsts.map (λ i => instantiateArrow (mkApp rw i) lctx)
+          List.join applyInsts
+        | _ => panic! "this shouldn't happen" -- because of rw.isForall = true
 
 
 elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
@@ -137,6 +150,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
         -- for an arrow, instantiate all possible equalities
         | true => return (instantiateArrow rw lctx) ++ accum
         | false =>
+           -- TODO : factor out this and use it in the recursion above
            match (<- matchEq? rw_type) with
            | none => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
            | some (rw_eq_type, rw_lhs, rw_rhs) => do
