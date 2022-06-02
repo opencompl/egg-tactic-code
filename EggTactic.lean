@@ -15,7 +15,7 @@ open Lean.Elab.Term
 
 
 -- Path to the egg server.
-def egg_server_path : String := "/home/bollu/work/egg/egg-tactic-code/json-egg/target/debug/egg-herbie"
+def egg_server_path : String := "json-egg/target/debug/egg-herbie"
 
 #check inferType
 #check Syntax
@@ -66,6 +66,8 @@ def performIO [Inhabited a] (io: IO a): a := Inhabited.default
 
 def surround_quotes (s: String): String :=
  "\"" ++ s ++ "\""
+def surround_escaped_quotes (s: String): String :=
+ "\\\"" ++ s ++ "\\\""
 
 
 def EggRewrite.toJson (rewr: EggRewrite) :=
@@ -105,9 +107,10 @@ def Lean.Json.getArr! (j: Json): Array Json :=
 
 def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
-  if e.isFVar then toString (lctx.getFVar! e).userName else toString e
+  surround_escaped_quotes $
+    if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
-elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
+elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
   let target <- getMainTarget
   -- let (target_newMVars, target_binderInfos, target_eq_type) ← forallMetaTelescopeReducing target
@@ -172,7 +175,7 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       let out := out ++ f!"-eq.t: {equalityTermType}\n"
       let out := out ++ f!"-eq.lhs: {equalityLhs} / {exprToString lctx equalityLhs}\n"
       let out := out ++ f!"-eq.rhs: {equalityRhs} / {exprToString lctx equalityRhs}\n"
-      let out := out ++ f!"-hypothese of type [eq.t]: {hypsOfEqualityTermType}\n"
+      let out := out ++ f!"-hypothesis of type [eq.t]: {hypsOfEqualityTermType}\n"
       -- let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
       let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
       -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
@@ -180,7 +183,7 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       -- let out := out ++ m!"-goals: {goals}\n"
       -- let out := out ++ m!"-target: {target}\n"
       let out := out ++ "\n====\n"
-      -- throwTacticEx `myTactic mvarId out
+      -- throwTacticEx `rawEgg mvarId out
       dbg_trace out
       -- | forge a request.
       let req : EggRequest := {
@@ -212,14 +215,14 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       -- let stdout : String := "STDOUT"
       dbg_trace ("9)stdout:\n" ++ stdout)
       let out_json : Json <- match Json.parse stdout with
-        | Except.error e => throwTacticEx `myTactic mvarId e
+        | Except.error e => throwTacticEx `rawEgg mvarId e
         | Except.ok j => pure j
       dbg_trace ("10)stdout as json:\n" ++ (toString out_json))
       let response_type := (out_json.getObjValD "response").getStr!
       dbg_trace ("11)stdout response: |" ++ response_type ++ "|")
       if response_type == "error"
       then
-        throwTacticEx `myTactic mvarId (toString out_json)
+        throwTacticEx `rawEgg mvarId (toString out_json)
       else
         dbg_trace "12) Creating explanation..."
         let explanationE : Except String (List EggExplanation) := do
@@ -231,7 +234,7 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
            let expl <- expl.mapM parseExplanation
            return expl.toList
         let explanation <- match explanationE with
-          | Except.error e => throwTacticEx `myTactic mvarId (e)
+          | Except.error e => throwTacticEx `rawEgg mvarId (e)
           | Except.ok v => pure v
         dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
         return (explanation, goals))
@@ -241,7 +244,7 @@ elab "myTactic" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       dbg_trace (f!"14) aplying rewrite {e}")
       let ldecl <- match lctx.findFromUserName? e.rule with
         | some ldecl => pure ldecl
-        | none => throwTacticEx `myTactic (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+        | none => throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
       let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl.toExpr else pure (ldecl.toExpr)
       -- dbg_trace "explanation: {e} | ldecl: {ldecl.userName}"
       -- | Code stolen from Lean.Elab.Tactic.Rewrite
@@ -263,15 +266,18 @@ def not_rewrite : Int := 42
 def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
+-- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
+
+
 
 -- | test that we can run rewrites
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   bint = eint := by
  intros a b c d e aeqa beqd deqe
---  myTactic [not_rewrite]
---  myTactic [rewrite_wrong_type]
- myTactic [beqd, deqe]
+--  rawEgg [not_rewrite]
+--  rawEgg [rewrite_wrong_type]
+ rawEgg [beqd, deqe]
 
 #print testSuccess
 
@@ -280,9 +286,9 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   eint = bint := by
  intros a b c d e aeqa beqd deqe
---  myTactic [not_rewrite]
---  myTactic [rewrite_wrong_type]
- myTactic [beqd, deqe]
+--  rawEgg [not_rewrite]
+--  rawEgg [rewrite_wrong_type]
+ rawEgg [beqd, deqe]
 
 #print testSuccessRev
 
@@ -295,11 +301,13 @@ theorem testInstantiation
   (h: Int) (k: Int): h - h = k - k := by
  have gh := group_inv h
  have gk := group_inv k
- myTactic [gh, gk]
+ rawEgg [gh, gk]
+ -- TODO: instantiate universally quantified equalities too
+--  rawEgg [group_inv]
 
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
- myTactic []
+ rawEgg []
  sorry
 -/
