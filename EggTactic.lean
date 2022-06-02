@@ -110,6 +110,10 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   surround_escaped_quotes $
     if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
+def instantiateArrow (rw : Expr) (lctx : LocalContext) : List EggRewrite :=
+  []
+
+
 elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
   let target <- getMainTarget
@@ -123,30 +127,35 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
     let maingoal <- getMainGoal
     -- | elaborate the given hypotheses as equalities.
     -- These are the rewrites we will perform rewrites with.
+    -- For arrows, we instantiate them as we can with variables from the context.
     let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => withMainContext do
       let rw_stx_ident := rw_stx.getId
       let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
       let rw_type <- inferType rw
-      match (<- matchEq? rw_type) with
-      | none => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
-      | some (rw_eq_type, rw_lhs, rw_rhs) => do
-         -- | check that rewrite is of the correct type.
-         let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
-         if is_well_typed
-         then
-          --  let rw_lhs : Expr <- whnf rw_lhs
-           let lctx <- getLCtx
-          --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
-           let lhs_name := exprToString lctx rw_lhs
-           let rhs_name := exprToString lctx rw_rhs
-           dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-           let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
-           return (egg_rewrite :: accum)
-         else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
-         f!" Expected to equate terms of type |{equalityTermType}|")
-      -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
-      -- let tm <- Term.elabTerm rw_stx (Option.some target)
-      -- return (tm :: accum)
+      let lctx <- getLCtx
+      match rw_type.isForall with
+        -- for an arrow, instantiate all possible equalities
+        | true => return (instantiateArrow rw lctx) ++ accum
+        | false =>
+           match (<- matchEq? rw_type) with
+           | none => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
+           | some (rw_eq_type, rw_lhs, rw_rhs) => do
+              -- | check that rewrite is of the correct type.
+              let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
+              if is_well_typed
+              then
+               --  let rw_lhs : Expr <- whnf rw_lhs
+               --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
+                let lhs_name := exprToString lctx rw_lhs
+                let rhs_name := exprToString lctx rw_rhs
+                dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
+                let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
+                return (egg_rewrite :: accum)
+              else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
+              f!" Expected to equate terms of type |{equalityTermType}|")
+           -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
+           -- let tm <- Term.elabTerm rw_stx (Option.some target)
+           -- return (tm :: accum)
     )
 
 
@@ -293,9 +302,6 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
 #print testSuccessRev
 
 
-
-
--- | TODO: figure out how to extract out types like the below.
 theorem testInstantiation
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
@@ -303,7 +309,12 @@ theorem testInstantiation
  have gk := group_inv k
  rawEgg [gh, gk]
  -- TODO: instantiate universally quantified equalities too
---  rawEgg [group_inv]
+-- 
+
+theorem testArrows
+  (group_inv: forall (g: Int), g - g  = 0)
+  (h: Int) (k: Int): h - h = k - k := by
+  rawEgg [group_inv]
 
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
