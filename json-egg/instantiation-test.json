@@ -1,0 +1,11 @@
+{ "request":"perform-rewrite",
+ "target-lhs":"(\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.13337 _uniq.13337\")",
+  "target-rhs":"(\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.13338 _uniq.13338\")",
+ "rewrites":[{"name":"gk",
+              "lhs":"(\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.13338 _uniq.13338\")",
+              "rhs":"(\"OfNat.ofNat.{0} Int 0 (Int.instOfNatInt 0)\")"},
+             { "name":"gh",
+               "lhs":"(\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.13337 _uniq.13337\")",
+               "rhs":"(\"OfNat.ofNat.{0} Int 0 (Int.instOfNatInt 0)\")"}
+            ]
+}
