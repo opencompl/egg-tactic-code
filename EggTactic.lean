@@ -116,9 +116,20 @@ def findMatchingExprs (t : Expr) : TacticM (List Name) :=
       -- This doesn't quite work yet: I need to find a way to unquote it when applying it later
       return res -- why won't return $ if ... work?
 
-def buildRewriteName (rw_stx : Syntax) : TacticM String :=
+partial def buildRewriteName (rw_stx : Syntax) : TacticM String :=
   let rw_stx_ident := rw_stx.getId
-  
+  if !rw_stx_ident.isAnonymous
+  then return toString rw_stx_ident
+  else do -- TODO: make this pattern more specific for multiple applications
+      let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
+      let rw_type <- inferType rw
+      let id <- `(eggTempHyp)
+      let name := id.getId.toString
+      liftMetaTactic fun mvarId => do
+        let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
+        let (_, mvarIdNew) ← Lean.Meta.intro1P mvarIdNew
+        return [mvarIdNew]
+      return name
 
 partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
   withMainContext do
@@ -136,9 +147,8 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
         let lhs_name := exprToString lctx rw_lhs
         let rhs_name := exprToString lctx rw_rhs
         let rw_name <- buildRewriteName rw_stx
-          ""
         dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-        let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
+        let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name  }
         return (egg_rewrite :: accum)
       else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
       f!" Expected to equate terms of type |{equalityTermType}|")
