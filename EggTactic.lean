@@ -17,10 +17,6 @@ open Lean.Elab.Term
 -- Path to the egg server.
 def egg_server_path : String := "json-egg/target/debug/egg-herbie"
 
-#check inferType
-#check Syntax
-#check Lean.Elab.Tactic.elabTerm
-
 structure EggRewrite where
   name: String
   lhs: String
@@ -109,19 +105,23 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
   surround_escaped_quotes $
     if e.isFVar then toString (lctx.getFVar! e).userName else toString e
-def findMatchingExprs (t : Expr) : TacticM (List Syntax) :=
+
+def findMatchingExprs (t : Expr) : TacticM (List Name) :=
   withMainContext do
     let lctx <- getLCtx
-    lctx.foldlM (init := []) fun (accum : List Syntax) (ldecl: LocalDecl) => do
+    lctx.foldlM (init := []) fun (accum : List Name) (ldecl: LocalDecl) => do
       let ldecl_expr := ldecl.toExpr -- Find the expression of the declaration.
       let ldecl_type <- inferType ldecl_expr
-      let res := if ldecl_type == t then (quote ldecl.userName) :: accum else accum
+      let res := if ldecl_type == t then ldecl.userName :: accum else accum
       -- This doesn't quite work yet: I need to find a way to unquote it when applying it later
       return res -- why won't return $ if ... work?
 
+def buildRewriteName (rw_stx : Syntax) : TacticM String :=
+  let rw_stx_ident := rw_stx.getId
+  
+
 partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
   withMainContext do
-    let rw_stx_ident := rw_stx.getId
     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
     let rw_type <- inferType rw
     let lctx <- getLCtx
@@ -135,6 +135,8 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
        --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
         let lhs_name := exprToString lctx rw_lhs
         let rhs_name := exprToString lctx rw_rhs
+        let rw_name <- buildRewriteName rw_stx
+          ""
         dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
         let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
         return (egg_rewrite :: accum)
@@ -143,8 +145,11 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
    | none =>
       match rw_type with
         | Expr.forallE n t b _ =>
-           let possibleInsts : List Syntax <- findMatchingExprs t
-           let applications : List Syntax <- possibleInsts.mapM (λ i => `($rw_stx $(i)))
+           let possibleInsts : List Name <- findMatchingExprs t
+           let applications : List Syntax <- possibleInsts.mapM λ i:Name =>
+             let i_stx := Array.mk [mkIdent i]
+             let res := Syntax.mkApp rw_stx i_stx
+             return res
            let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
            return List.join applyInsts
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
@@ -320,6 +325,7 @@ theorem testInstantiation
  -- TODO: instantiate universally quantified equalities too
 -- 
 
+set_option pp.rawOnError true
 theorem testArrows
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
