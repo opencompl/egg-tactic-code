@@ -110,22 +110,42 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   surround_escaped_quotes $
     if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
-def findMatchingExprs (t : Expr) (lctx : LocalContext) : List Expr :=
-  [] -- TODO : implement
+def findMatchingExprs (t : Expr) : TacticM (List Syntax) :=
+  return [] -- TODO : implement
 
-partial def instantiateArrow (rw : Expr) (lctx : LocalContext) : List EggRewrite :=
-  --let rw_type <- inferType rw
-  -- end recursion
-  match rw.eq?  with
-    | some (rw_eq_type, rw_lhs, rw) => [] -- TODO: here add the functionality below to add instances with all applications
-    | none =>
-       match rw with
+
+partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
+  withMainContext do
+    let rw_stx_ident := rw_stx.getId
+    let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
+    let rw_type <- inferType rw
+    let lctx <- getLCtx
+     match (<- matchEq? rw_type) with
+   | some (rw_eq_type, rw_lhs, rw_rhs) => do
+      -- | check that rewrite is of the correct type.
+      let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
+      if is_well_typed
+      then
+       --  let rw_lhs : Expr <- whnf rw_lhs
+       --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
+        let lhs_name := exprToString lctx rw_lhs
+        let rhs_name := exprToString lctx rw_rhs
+        dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
+        let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
+        return (egg_rewrite :: accum)
+      else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
+      f!" Expected to equate terms of type |{equalityTermType}|")
+   | none =>
+      match rw_type with
         | Expr.forallE n t b _ =>
-          let possibleInsts : List Expr := findMatchingExprs t lctx
-          let applyInsts : List (List EggRewrite) := possibleInsts.map (λ i => instantiateArrow (mkApp rw i) lctx)
-          List.join applyInsts
-        | _ => panic! "this shouldn't happen" -- because of rw.isForall = true
+           let possibleInsts : List Syntax <- findMatchingExprs t
+           let applyInsts : List (List EggRewrite) <- possibleInsts.mapM (addEqualities equalityTermType accum)
+           return List.join applyInsts
+        | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
 
+     -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
+     -- let tm <- Term.elabTerm rw_stx (Option.some target)
+     -- return (tm :: accum)
 
 elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
   let goals <- getGoals
@@ -141,38 +161,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
     -- | elaborate the given hypotheses as equalities.
     -- These are the rewrites we will perform rewrites with.
     -- For arrows, we instantiate them as we can with variables from the context.
-    let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (fun accum rw_stx => withMainContext do
-      let rw_stx_ident := rw_stx.getId
-      let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
-      let rw_type <- inferType rw
-      let lctx <- getLCtx
-      match rw_type.isForall with
-        -- for an arrow, instantiate all possible equalities
-        | true => return (instantiateArrow rw lctx) ++ accum
-        | false =>
-           -- TODO : factor out this and use it in the recursion above
-           match (<- matchEq? rw_type) with
-           | none => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
-           | some (rw_eq_type, rw_lhs, rw_rhs) => do
-              -- | check that rewrite is of the correct type.
-              let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
-              if is_well_typed
-              then
-               --  let rw_lhs : Expr <- whnf rw_lhs
-               --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
-                let lhs_name := exprToString lctx rw_lhs
-                let rhs_name := exprToString lctx rw_rhs
-                dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-                let egg_rewrite := { name := toString rw_stx_ident, lhs := toString lhs_name, rhs := toString rhs_name  }
-                return (egg_rewrite :: accum)
-              else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
-              f!" Expected to equate terms of type |{equalityTermType}|")
-           -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
-           -- let tm <- Term.elabTerm rw_stx (Option.some target)
-           -- return (tm :: accum)
-    )
-
-
+    let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (addEqualities equalityTermType)
     let explanations : List EggExplanation <- (liftMetaTacticAux fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
       -- let goals <- apply mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
