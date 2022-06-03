@@ -109,10 +109,15 @@ def exprToString (lctx: LocalContext) (e: Expr) : Format :=
   -- (repr e)
   surround_escaped_quotes $
     if e.isFVar then toString (lctx.getFVar! e).userName else toString e
-
 def findMatchingExprs (t : Expr) : TacticM (List Syntax) :=
-  return [] -- TODO : implement
-
+  withMainContext do
+    let lctx <- getLCtx
+    lctx.foldlM (init := []) fun (accum : List Syntax) (ldecl: LocalDecl) => do
+      let ldecl_expr := ldecl.toExpr -- Find the expression of the declaration.
+      let ldecl_type <- inferType ldecl_expr
+      let res := if ldecl_type == t then (quote ldecl.userName) :: accum else accum
+      -- This doesn't quite work yet: I need to find a way to unquote it when applying it later
+      return res -- why won't return $ if ... work?
 
 partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
   withMainContext do
@@ -139,7 +144,8 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
       match rw_type with
         | Expr.forallE n t b _ =>
            let possibleInsts : List Syntax <- findMatchingExprs t
-           let applyInsts : List (List EggRewrite) <- possibleInsts.mapM (addEqualities equalityTermType accum)
+           let applications : List Syntax <- possibleInsts.mapM (λ i => `($rw_stx $(i)))
+           let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
            return List.join applyInsts
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
 
