@@ -125,11 +125,15 @@ partial def buildRewriteName (rw_stx : Syntax) : TacticM String :=
       let rw_type <- inferType rw
       let id <- `(eggTempHyp)
       let name := id.getId.toString
-      liftMetaTactic fun mvarId => do
-        let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
-        let (_, mvarIdNew) ← Lean.Meta.intro1P mvarIdNew
-        return [mvarIdNew]
-      return name
+      let lctx <- getLCtx
+      match lctx.findFromUserName? name with
+       | none =>
+          liftMetaTactic fun mvarId => do
+            let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
+            let (_, mvarIdNew) ← Lean.Meta.intro1P mvarIdNew
+            return [mvarIdNew]
+          return name
+       | _ => throwError f!"repeated name"
 
 partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
   withMainContext do
@@ -160,8 +164,12 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
              let i_stx := Array.mk [mkIdent i]
              let res := Syntax.mkApp rw_stx i_stx
              return res
-           let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
-           return List.join applyInsts
+           -- let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
+           -- return List.join applyInsts
+           let applyInsts' : List EggRewrite <-
+              applications.foldlM (fun l xs => do return l ++ (<- (addEqualities equalityTermType accum xs))) []
+           return applyInsts'
+           
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
 
      -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
