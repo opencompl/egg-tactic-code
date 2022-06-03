@@ -113,7 +113,6 @@ def findMatchingExprs (t : Expr) : TacticM (List Name) :=
       let ldecl_expr := ldecl.toExpr -- Find the expression of the declaration.
       let ldecl_type <- inferType ldecl_expr
       let res := if ldecl_type == t then ldecl.userName :: accum else accum
-      -- This doesn't quite work yet: I need to find a way to unquote it when applying it later
       return res -- why won't return $ if ... work?
 
 partial def buildRewriteName (rw_stx : Syntax) : TacticM String :=
@@ -123,9 +122,9 @@ partial def buildRewriteName (rw_stx : Syntax) : TacticM String :=
   else do -- TODO: make this pattern more specific for multiple applications
       let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
       let rw_type <- inferType rw
-      let id <- `(eggTempHyp)
-      let name := id.getId.toString
       let lctx <- getLCtx
+      let id := lctx.getUnusedName "eggRewrite"
+      let name := id.toString
       match lctx.findFromUserName? name with
        | none =>
           liftMetaTactic fun mvarId => do
@@ -343,7 +342,6 @@ theorem testInstantiation
  -- TODO: instantiate universally quantified equalities too
 -- 
 
-set_option pp.rawOnError true
 theorem testArrows
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
