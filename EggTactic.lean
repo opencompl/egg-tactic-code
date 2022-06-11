@@ -136,47 +136,9 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
 
 
 partial def ensureRewriteExists (rw: Expr) (rw_type: Expr) (rw_stx : Syntax) (state: EggState): TacticM (String × EggState) :=
-  return (toString state.ix, { ix := state.ix + 1, name2expr := ((state.ix, rw) :: state.name2expr) : EggState })
-  -- let rw_stx_ident := rw_stx.getId
-  -- if !rw_stx_ident.isAnonymous
-  -- then return (toString rw_stx_ident, state)
-  -- else do -- TODO: make this pattern more specific for multiple applications
-  --     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
-  --     let rw_type <- inferType rw
-  --     let lctx <- getLCtx
-  --     let id := s!"eggRewrite{state.ix}"
-  --     let mvar <- mkFreshExprSyntheticOpaqueMVar rw_type (Name.mkSimple id) 
-  --     -- withMVarContext mvar.mvarId! do
-  --     assignExprMVar mvar.mvarId! rw
-  --     -- let fvarId ← mkFreshFVarId
-  --     -- let lctx   := lctx.mkLocalDecl fvarId id rw_type
-  --     -- setLCtx 
+  let i := state.ix
+  return (toString i, { ix := i + 1, name2expr := ((i, rw) :: state.name2expr) : EggState })
 
-  --     -- let _ <- intro mvar.mvarId! id
-
-  --     -- Lean.Meta.define
-  --     return (id, { ix := state.ix + 1, name2expr := ((toString state.ix, rw) :: state.name2expr) : EggState })
-  --     -- let name := id.toString
-      -- match lctx.findFromUserName? name with
-      --  | none =>
-      --     liftMetaMAtMain fun mvarId => do
-      --       -- let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
-      --       let (_, mvarIdNew) ← Lean.Meta.introN mvarId 1 
-      --       -- let (_, mvarIdNew) ← Lean.Meta.intros mvarIdNew
-      --       -- return [mvarIdNew]
-      --       return ()
-      --     return namelet name := id.toString
-      -- match lctx.findFromUserName? name with
-      --  | none =>
-      --     liftMetaMAtMain fun mvarId => do
-      --       -- let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
-      --       let (_, mvarIdNew) ← Lean.Meta.introN mvarId 1 
-      --       -- let (_, mvarIdNew) ← Lean.Meta.intros mvarIdNew
-      --       -- return [mvarIdNew]
-      --       return ()
-      --     return name
-      --  | _ => throwError f!"repeated name: {name}"
-      --  | _ => throwError f!"repeated name: {name}"
 -- | disgusting. Please fix to a real parser later @andres
 partial def parseInt (n: Int) (s: String): Option Int :=
   if n < 0 
@@ -196,8 +158,6 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
       let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
       if is_well_typed
       then
-       --  let rw_lhs : Expr <- whnf rw_lhs
-       --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
         let lhs_name := exprToString lctx rw_lhs
         let rhs_name := exprToString lctx rw_rhs
         let (rw_name, ix) <- ensureRewriteExists rw rw_type rw_stx state
@@ -211,11 +171,9 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
         | Expr.forallE n t b _ =>
            let possibleInsts : List Name <- findMatchingExprs t
            let applications : List Syntax <- possibleInsts.mapM λ i:Name =>
-             let i_stx := Array.mk [mkIdent i]
-             let res := Syntax.mkApp rw_stx i_stx
-             return res
-           -- let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
-           -- return List.join applyInsts
+               let i_stx := Array.mk [mkIdent i]
+               let res := Syntax.mkApp rw_stx i_stx
+               return res
            let (applyInsts', state)  <-
               applications.foldlM 
                 (fun xs_and_state stx => do
@@ -262,17 +220,6 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           then return (decl.userName, decl.type) :: accum
           else return accum)
 
-      -- let hypsOfEquality <- lctx.foldlM (init := []) (fun accum decl =>  do
-      --     match decl.type.eq? with
-      --     | none => return accum
-      --     | some (eqType', _, _) => do
-      --       let isEqOfCorrectType <- isExprDefEq equalityTermType eqType'
-      --        -- TODO: extract only if eqType = eqType'.
-      --        -- Yes I see the irony.
-      --        if isEqOfCorrectType
-      --        -- | accessing decl.value sometimes creates a panic.
-      --        then return (decl.userName, decl.value) :: accum
-      --        else return accum)
       let out := "\n====\n"
       let out := out ++ f!"-eq.t: {equalityTermType}\n"
       let out := out ++ f!"-eq.lhs: {equalityLhs} / {exprToString lctx equalityLhs}\n"
@@ -340,40 +287,24 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           | Except.ok v => pure v
         dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
         return (explanation))
-        -- return (explanation, goals))
 
     for e in explanations do {
       let lctx <- getLCtx
       dbg_trace (f!"14) aplying rewrite {e}")
         let name : String := e.rule
-        -- let nameInt := ofNat name
         let ldecl_expr <- match (parseInt 100 name) >>= (state.findExpr) with
         | some ix => pure ix 
         | none => do 
-          --  evalTactic (<- `(tactic| sorry))
            throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
-      -- let ldecl <- match lctx.findFromUserName? e.rule with
-      --   | some ldecl => pure ldecl
-      --   | none => do 
-      --     --  evalTactic (<- `(tactic| sorry))
-      --      throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
       let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
-      -- dbg_trace "explanation: {e} | ldecl: {ldecl.userName}"
-      -- | Code stolen from Lean.Elab.Tactic.Rewrite
       let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
       dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
       let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
       replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
-      -- replaceMainGoal [mvarId']
     }
     -- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
     Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
     return ()
-
--- theorem test {p: Prop} : (p ∨ p) -> p := by
---   intro h
---   apply Or.elim h
---   trace_state
 
 -- TODO: Figure out how to extract hypotheses from goal.
 -- | this problem is egg-complete.
@@ -382,8 +313,6 @@ def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
 -- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
-
-
 
 -- | test that we can run rewrites
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
