@@ -11,11 +11,9 @@ import Lean.Elab.Deriving.FromToJson
 open Lean Meta Elab Tactic
 open Lean.Elab.Term
 
-
-
-
 -- Path to the egg server.
-def egg_server_path : String := "json-egg/target/debug/egg-herbie"
+def egg_server_path : String := 
+  "json-egg/target/debug/egg-herbie"
 
 structure EggRewrite where
   name: String
@@ -115,26 +113,79 @@ def findMatchingExprs (t : Expr) : TacticM (List Name) :=
       let res := if ldecl_type == t then ldecl.userName :: accum else accum
       return res -- why won't return $ if ... work?
 
-partial def buildRewriteName (rw_stx : Syntax) : TacticM String :=
-  let rw_stx_ident := rw_stx.getId
-  if !rw_stx_ident.isAnonymous
-  then return toString rw_stx_ident
-  else do -- TODO: make this pattern more specific for multiple applications
-      let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
-      let rw_type <- inferType rw
-      let lctx <- getLCtx
-      let id := lctx.getUnusedName "eggRewrite"
-      let name := id.toString
-      match lctx.findFromUserName? name with
-       | none =>
-          liftMetaTactic fun mvarId => do
-            let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
-            let (_, mvarIdNew) ← Lean.Meta.intro1P mvarIdNew
-            return [mvarIdNew]
-          return name
-       | _ => throwError f!"repeated name"
+open Lean.Meta
 
-partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) : TacticM (List EggRewrite) :=
+#check withLCtx 
+
+structure EggState where
+  ix: Nat
+  name2expr: List (Int × Expr)
+  deriving Inhabited
+
+instance : ToString EggState where
+  toString expl :=
+    toString f!"[ix:{expl.ix}]"
+
+-- | find an expression with the given index as needle.
+def EggState.findExpr (state: EggState) (needle: Int): Option Expr := 
+    let rec go (l: List (Int × Expr)): Option Expr :=
+      match l with 
+      | [] => Option.none
+      | ((ix, e)::xs) => if ix == needle then some e else go xs 
+    go state.name2expr
+
+
+partial def ensureRewriteExists (rw: Expr) (rw_type: Expr) (rw_stx : Syntax) (state: EggState): TacticM (String × EggState) :=
+  return (toString state.ix, { ix := state.ix + 1, name2expr := ((state.ix, rw) :: state.name2expr) : EggState })
+  -- let rw_stx_ident := rw_stx.getId
+  -- if !rw_stx_ident.isAnonymous
+  -- then return (toString rw_stx_ident, state)
+  -- else do -- TODO: make this pattern more specific for multiple applications
+  --     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
+  --     let rw_type <- inferType rw
+  --     let lctx <- getLCtx
+  --     let id := s!"eggRewrite{state.ix}"
+  --     let mvar <- mkFreshExprSyntheticOpaqueMVar rw_type (Name.mkSimple id) 
+  --     -- withMVarContext mvar.mvarId! do
+  --     assignExprMVar mvar.mvarId! rw
+  --     -- let fvarId ← mkFreshFVarId
+  --     -- let lctx   := lctx.mkLocalDecl fvarId id rw_type
+  --     -- setLCtx 
+
+  --     -- let _ <- intro mvar.mvarId! id
+
+  --     -- Lean.Meta.define
+  --     return (id, { ix := state.ix + 1, name2expr := ((toString state.ix, rw) :: state.name2expr) : EggState })
+  --     -- let name := id.toString
+      -- match lctx.findFromUserName? name with
+      --  | none =>
+      --     liftMetaMAtMain fun mvarId => do
+      --       -- let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
+      --       let (_, mvarIdNew) ← Lean.Meta.introN mvarId 1 
+      --       -- let (_, mvarIdNew) ← Lean.Meta.intros mvarIdNew
+      --       -- return [mvarIdNew]
+      --       return ()
+      --     return namelet name := id.toString
+      -- match lctx.findFromUserName? name with
+      --  | none =>
+      --     liftMetaMAtMain fun mvarId => do
+      --       -- let mvarIdNew ← Lean.Meta.define mvarId name rw_type rw
+      --       let (_, mvarIdNew) ← Lean.Meta.introN mvarId 1 
+      --       -- let (_, mvarIdNew) ← Lean.Meta.intros mvarIdNew
+      --       -- return [mvarIdNew]
+      --       return ()
+      --     return name
+      --  | _ => throwError f!"repeated name: {name}"
+      --  | _ => throwError f!"repeated name: {name}"
+-- | disgusting. Please fix to a real parser later @andres
+partial def parseInt (n: Int) (s: String): Option Int :=
+  if n < 0 
+  then none
+  else if toString n == s
+  then some n
+  else parseInt (n - 1) s
+
+partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) (state: EggState): TacticM ((List EggRewrite) × EggState) :=
   withMainContext do
     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
     let rw_type <- inferType rw
@@ -149,10 +200,10 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
        --  let rw_lhs_decl := LocalContext.findFVar? lctx rw_lhs
         let lhs_name := exprToString lctx rw_lhs
         let rhs_name := exprToString lctx rw_rhs
-        let rw_name <- buildRewriteName rw_stx
-        dbg_trace "1) rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
+        let (rw_name, ix) <- ensureRewriteExists rw rw_type rw_stx state
+        dbg_trace "1) rw_name: {rw_name} | rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
         let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name  }
-        return (egg_rewrite :: accum)
+        return (egg_rewrite :: accum, ix)
       else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
       f!" Expected to equate terms of type |{equalityTermType}|")
    | none =>
@@ -165,9 +216,14 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
              return res
            -- let applyInsts : List (List EggRewrite) <- applications.mapM (addEqualities equalityTermType accum)
            -- return List.join applyInsts
-           let applyInsts' : List EggRewrite <-
-              applications.foldlM (fun l xs => do return l ++ (<- (addEqualities equalityTermType accum xs))) []
-           return applyInsts'
+           let (applyInsts', state)  <-
+              applications.foldlM 
+                (fun xs_and_state stx => do
+                  let xs := xs_and_state.fst 
+                  let state := xs_and_state.snd 
+                  let (xs', state) <- (addEqualities equalityTermType xs stx state)
+                  return (xs ++ xs', state)) ([], state)
+           return (applyInsts', state)
            
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
 
@@ -189,8 +245,14 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
     -- | elaborate the given hypotheses as equalities.
     -- These are the rewrites we will perform rewrites with.
     -- For arrows, we instantiate them as we can with variables from the context.
-    let egg_rewrites : List EggRewrite <- rewrites.getElems.foldlM (init := []) (addEqualities equalityTermType)
-    let explanations : List EggExplanation <- (liftMetaTacticAux fun mvarId => do
+    let initState := { ix := 0, name2expr := [] : EggState}
+    let (egg_rewrites , state)  <- rewrites.getElems.foldlM (init := ([], initState)) 
+        (fun xs_and_state stx => do 
+          let xs := xs_and_state.fst 
+          let state := xs_and_state.snd 
+          let (xs', state) <- (addEqualities equalityTermType xs stx state)
+          return (xs ++ xs', state))
+    let explanations : List EggExplanation <- (liftMetaMAtMain fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
       -- let goals <- apply mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
       let lctx <- getLCtx
@@ -277,21 +339,34 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           | Except.error e => throwTacticEx `rawEgg mvarId (e)
           | Except.ok v => pure v
         dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
-        return (explanation, goals))
+        return (explanation))
+        -- return (explanation, goals))
 
     for e in explanations do {
       let lctx <- getLCtx
       dbg_trace (f!"14) aplying rewrite {e}")
-      let ldecl <- match lctx.findFromUserName? e.rule with
-        | some ldecl => pure ldecl
-        | none => throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
-      let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl.toExpr else pure (ldecl.toExpr)
+        let name : String := e.rule
+        -- let nameInt := ofNat name
+        let ldecl_expr <- match (parseInt 100 name) >>= (state.findExpr) with
+        | some ix => pure ix 
+        | none => do 
+          --  evalTactic (<- `(tactic| sorry))
+           throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      -- let ldecl <- match lctx.findFromUserName? e.rule with
+      --   | some ldecl => pure ldecl
+      --   | none => do 
+      --     --  evalTactic (<- `(tactic| sorry))
+      --      throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
       -- dbg_trace "explanation: {e} | ldecl: {ldecl.userName}"
       -- | Code stolen from Lean.Elab.Tactic.Rewrite
       let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
+      dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
       let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
       replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
+      -- replaceMainGoal [mvarId']
     }
+    -- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
     Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
     return ()
 
@@ -342,11 +417,15 @@ theorem testInstantiation
  -- TODO: instantiate universally quantified equalities too
 -- 
 
+#print testInstantiation
+
 theorem testArrows
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
   rawEgg [group_inv]
+  
 
+#print testArrows
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
