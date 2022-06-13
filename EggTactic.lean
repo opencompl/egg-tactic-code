@@ -135,9 +135,9 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     go state.name2expr
 
 
-partial def ensureRewriteExists (rw: Expr) (rw_type: Expr) (rw_stx : Syntax) (state: EggState): TacticM (String × EggState) :=
+partial def ensureRewriteExists (rw: Expr) (rw_type: Expr) (rw_stx : Syntax) (state: EggState): (String × EggState) :=
   let i := state.ix
-  return (toString i, { ix := i + 1, name2expr := ((i, rw) :: state.name2expr) : EggState })
+  (toString i, { ix := i + 1, name2expr := ((i, rw) :: state.name2expr) : EggState })
 
 -- | disgusting. Please fix to a real parser later @andres
 partial def parseInt (n: Int) (s: String): Option Int :=
@@ -149,10 +149,11 @@ partial def parseInt (n: Int) (s: String): Option Int :=
 
 partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) (state: EggState): TacticM ((List EggRewrite) × EggState) :=
   withMainContext do
+    dbg_trace "===addEqualities running==="
     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
     let rw_type <- inferType rw
     let lctx <- getLCtx
-     match (<- matchEq? rw_type) with
+    match (<- matchEq? rw_type) with
    | some (rw_eq_type, rw_lhs, rw_rhs) => do
       -- | check that rewrite is of the correct type.
       let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
@@ -160,10 +161,10 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
       then
         let lhs_name := exprToString lctx rw_lhs
         let rhs_name := exprToString lctx rw_rhs
-        let (rw_name, ix) <- ensureRewriteExists rw rw_type rw_stx state
+        let (rw_name, state) := ensureRewriteExists rw rw_type rw_stx state
         dbg_trace "1) rw_name: {rw_name} | rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-        let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name  }
-        return (egg_rewrite :: accum, ix)
+        let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name : EggRewrite }
+        return (egg_rewrite :: accum, state)
       else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
       f!" Expected to equate terms of type |{equalityTermType}|")
    | none =>
@@ -179,12 +180,11 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
                 (fun xs_and_state stx => do
                   let xs := xs_and_state.fst 
                   let state := xs_and_state.snd 
-                  let (xs', state) <- (addEqualities equalityTermType xs stx state)
-                  return (xs ++ xs', state)) ([], state)
+                  let (xs', state) <- (addEqualities equalityTermType [] stx state)
+                  return (xs' ++ xs, state)) ([], state)
            return (applyInsts', state)
            
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
-
      -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
      -- let tm <- Term.elabTerm rw_stx (Option.some target)
      -- return (tm :: accum)
@@ -242,7 +242,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       -- | Invoke accursed magic to send the request.
       let req_json : String := req.toJson
       -- | Steal code from |IO.Process.run|
-      dbg_trace "2) sending request |{egg_server_path} {req_json}|"
+      dbg_trace "2) sending request:---\n {egg_server_path}\n{req_json}\n---"
       let egg_server_process <- IO.Process.spawn
         { cmd := egg_server_path,
           -- stdin := IO.Process.Stdio.piped,
@@ -348,11 +348,65 @@ theorem testInstantiation
 
 #print testInstantiation
 
+theorem testInstantiation2
+  (group_inv: forall (g: Int), g - g  = 0)
+  (h: Int) (k: Int): h - h = k - k := by
+ rawEgg [group_inv]
+#print testInstantiation2
+
+
 theorem testArrows
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
   rawEgg [group_inv]
-  
+
+/-  
+      rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
+      rw!("assoc-mul'"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
+      rw!("one-mul";  "(* 1 ?a)" => "?a"),
+      rw!("one-mul'";  "?a" => "(* 1 ?a)"),
+      rw!("inv-left";  "(* (^-1 ?a) ?a)" => "1"),
+      rw!("inv-left'";  "1" => "(* (^-1 a) a)"),
+      rw!("inv-left''";  "1" => "(* (^-1 b) b)"),
+      rw!("mul-one";  "(* ?a 1)" => "?a"),
+      rw!("mul-one'";  "?a" => "(* ?a 1)" ),
+      rw!("inv-right";  "(* ?a (^-1 ?a))" => "1"),
+      rw!("inv-right'";  "1" => "(* a (^-1 a))"),
+      rw!("inv-right''";  "1" => "(* b (^-1 b))"),
+      //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
+-/
+
+theorem inv_mul_cancel_left (G: Type) 
+  (inv: G → G)
+  (mul: G → G → G)
+  (one: G)
+  (x y: G)
+  (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
+  (assocMul': forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
+  (oneMul: forall (a: G), mul a one = a)
+  (oneMul': forall (a: G), mul one a = a)
+  (invLeft: forall (a: G), mul (inv a) a = one)
+  (invLeft':  mul (inv x) x = one)
+  (invLeft'':  mul (inv y) y = one)
+  (invRight: forall (a: G), mul a (inv a) = one)
+  (invRight':  one = mul x (inv x))
+  (invRight'': one = mul y (inv y)): mul (inv y) (inv x) = inv (mul x y) := by {
+  rawEgg [assocMul, assocMul', oneMul, oneMul', invLeft', invLeft'',  invRight', invRight'']
+}
+
+
+theorem assoc_instantiate(G: Type) 
+  (mul: G → G → G)
+  (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
+  (x y z: G) : mul x (mul y z) = mul (mul x y) z := by {
+  rawEgg [assocMul]
+}
+
+#print assoc_instantiate
+
+
+#print assoc_instantiate
+
 
 #print testArrows
 /-

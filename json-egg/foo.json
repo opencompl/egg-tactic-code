@@ -1,0 +1,6 @@
+ {"request":"perform-rewrite",
+     "target-lhs":"\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.16909 _uniq.16909\"",
+     "target-rhs":"\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.16910 _uniq.16910\"",
+     "rewrites":[
+         {"name":"eggRewrite","lhs":"\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.16910 _uniq.16910\"","rhs":"\"OfNat.ofNat.{0} Int 0 (Int.instOfNatInt 0)\""},
+         {"name":"eggRewrite","lhs":"\"HSub.hSub.{0 0 0} Int Int Int (instHSub.{0} Int Int.instSubInt) _uniq.16909 _uniq.16909\"","rhs":"\"OfNat.ofNat.{0} Int 0 (Int.instOfNatInt 0)\""}]}

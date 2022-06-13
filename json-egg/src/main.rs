@@ -34,14 +34,14 @@ impl<L: Language> CostFunction<L> for AstSizeFive {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct RewriteStr {
     name: String,
     lhs: String,
     rhs: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 #[serde(tag = "request")]
 enum Request {
@@ -54,7 +54,7 @@ enum Request {
 }
 
 
-#[derive(Serialize)]
+#[derive(Serialize,Debug)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "response")]
 enum Response {
@@ -109,6 +109,7 @@ fn extract_rule_from_flat_term<L : Language>(t: &FlatTerm<L>) -> Option<(String,
 fn handle_request(req: Request) -> Response {
     match req {
         Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
+
             let mut new_rewrites = vec![];
             for rw in rewrites {
                 new_rewrites.push(respond_error!(parse_rewrite(&rw)));
@@ -123,10 +124,12 @@ fn handle_request(req: Request) -> Response {
             let rhs_id = graph.add_expr(&target_rhs_expr);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
+            .with_node_limit(4096)
             .with_egraph(graph)
-            //.with_node_limit(105)
             .with_explanations_enabled()
             .run(&new_rewrites);
+
+            println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
                 let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
@@ -139,7 +142,7 @@ fn handle_request(req: Request) -> Response {
                 // println!("iterating on the flat explanation \n{:?}\n..", flat_explanation);
                 for e in flat_explanation {
                     let rule = extract_rule_from_flat_term(e);
-                    eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
+                    // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
                     match rule  {
                         Some(r) => {
                             rule_names.push(r);
@@ -149,7 +152,7 @@ fn handle_request(req: Request) -> Response {
                 }
                 Response::PerformRewrite { success: true, explanation: rule_names }
             } else {
-                Response::PerformRewrite { success: false, explanation: vec![] }
+                Response::Error {error: format!("no rewrite found! egraph: {:?}", runner.egraph.dump()) }
 
             }
         }
@@ -159,9 +162,12 @@ fn handle_request(req: Request) -> Response {
 
 fn main_json() -> io::Result<()> {
     env_logger::init();
+    // println!("1");
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+    // println!("2");
     let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
+    // println!("3");
 
 
     for read in deserializer.into_iter() {
@@ -169,8 +175,12 @@ fn main_json() -> io::Result<()> {
             Err(err) => Response::Error {
                 error: format!("Deserialization error: {}", err),
             },
-            Ok(req) => handle_request(req),
+            Ok(req) => {
+                // println!("4");
+                handle_request(req)
+            }
         };
+        // println!("5");
         serde_json::to_writer_pretty(&mut stdout, &response)?;
         println!()
     }
@@ -224,7 +234,7 @@ fn main_group_check() {
 
     // That's it! We can run equality saturation now.
     let mut runner = Runner::default()
-        //.with_node_limit(105)
+        .with_node_limit(4000)
         .with_explanations_enabled()
         .with_expr(&start)
         .run(rules);
