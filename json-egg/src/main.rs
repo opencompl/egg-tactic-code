@@ -61,7 +61,7 @@ enum Response {
     PerformRewrite {
         success: bool,
         // TODO: how does one use Sexp?
-        explanation: Vec<(String, String)>
+        explanation: Vec<Vec<String>>
     },
     Error { error: String }
 }
@@ -89,14 +89,19 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
-fn extract_rule_from_flat_term<L : Language>(t: &FlatTerm<L>) -> Option<(String, String)> {
+fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> {
     match (t.forward_rule, t.backward_rule){
-        (Some(rule), _) => Some(("fwd".to_string(), rule.as_str().to_string())),
-        (_, Some(rule)) => Some(("bwd".to_string(), rule.as_str().to_string())),
+        (Some(rule), _) => {
+            Some(vec!["fwd".to_string(), rule.as_str().to_string(), t.node.to_string()])
+        },
+        (_, Some(rule)) => Some(vec!["bwd".to_string(), rule.as_str().to_string(), t.node.to_string()]),
         (None, None) => {
             for c in &t.children {
                 match extract_rule_from_flat_term(&c) {
-                    Some(rule) => return Some(rule),
+                    Some(mut rule) => {
+                        rule.push(t.node.to_string());
+                        return Some(rule)
+                    },
                     None => ()
                 }
             }
@@ -129,7 +134,7 @@ fn handle_request(req: Request) -> Response {
             .with_explanations_enabled()
             .run(&new_rewrites);
 
-            println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
+            // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
                 let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
@@ -137,20 +142,22 @@ fn handle_request(req: Request) -> Response {
                 let flat_explanation : &FlatExplanation<SymbolLang> =
                     explanation.make_flat_explanation();
 
-                let mut rule_names : Vec<(String,String)> = Vec::new();
+                println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
-                // println!("iterating on the flat explanation \n{:?}\n..", flat_explanation);
+                let mut rules : Vec<Vec<String>> = Vec::new();
+
+                println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
                 for e in flat_explanation {
                     let rule = extract_rule_from_flat_term(e);
                     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
                     match rule  {
                         Some(r) => {
-                            rule_names.push(r);
+                            rules.push(r);
                         }
                         None => ()
                     }
                 }
-                Response::PerformRewrite { success: true, explanation: rule_names }
+                Response::PerformRewrite { success: true, explanation: rules }
             } else {
                 Response::Error {error: format!("no rewrite found! egraph: {:?}", runner.egraph.dump()) }
 

@@ -10,6 +10,8 @@ import Lean.Elab.Deriving.FromToJson
 
 open Lean Meta Elab Tactic
 open Lean.Elab.Term
+open IO
+open System
 
 -- Path to the egg server.
 def egg_server_path : String := 
@@ -98,11 +100,43 @@ def Lean.Json.getArr! (j: Json): Array Json :=
   | Json.arr a => a
   | _ => #[]
 
+def Lean.List.contains [DecidableEq a] (as: List a) (needle: a): Bool := 
+  as.any (. == needle)
+ 
+def lean_list_get? (as: List a) (n: Nat): Option a := 
+match n with 
+| 0 => match as with | .nil => none | .cons a as => some a
+| n + 1 => match as with | .nil => none |.cons a as => lean_list_get? as n
 
-def exprToString (lctx: LocalContext) (e: Expr) : Format :=
-  -- (repr e)
-  surround_escaped_quotes $
-    if e.isFVar then toString (lctx.getFVar! e).userName else toString e
+def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n 
+
+partial def exprToString_ (e: Expr) (bound: List Name): MetaM String :=   
+match e with 
+  | Expr.const  name levels data => pure (name.toString)
+  | Expr.bvar ix data => 
+    match (bound.get? ix) with 
+    | some name => pure ("?" ++ name.toString)
+    | none => throwError s!"no bound name known for index {ix} | expr: {e} | bound: {bound}"
+  | Expr.fvar id data => 
+      if bound.contains id.name
+      then throwError s!"found bound name: {id.name}"
+      else pure (id.name.toString)
+  | Expr.lit (.natVal n) data => pure (toString n)
+  | Expr.app     l r data => do 
+     let lstr <- exprToString_ l bound
+     let rstr <- exprToString_ r bound
+     pure $ "(ap " ++ lstr ++ " " ++ rstr ++ ")"
+--   | Expr.lit lit data => lit.
+--  | Expr.forallE name type body data => exprToString_ body (name::bound)
+  | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
+
+
+
+def exprToString (e: Expr) (bound: List Name) : MetaM Format := do
+  let s <- exprToString_ e bound
+  -- pure (surround_escaped_quotes s)
+  pure s
+    -- if e.isFVar then toString (lctx.getFVar! e).userName else toString e
 
 def findMatchingExprs (t : Expr) : TacticM (List Name) :=
   withMainContext do
@@ -135,9 +169,15 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     go state.name2expr
 
 
-partial def ensureRewriteExists (rw: Expr) (rw_type: Expr) (rw_stx : Syntax) (state: EggState): (String × EggState) :=
+partial def gensymRewriteName (rw: Expr) (state: EggState): (String × EggState) :=
   let i := state.ix
   (toString i, { ix := i + 1, name2expr := ((i, rw) :: state.name2expr) : EggState })
+
+def expr_get_forall_bound_vars: Expr -> List Name 
+| Expr.forallE name ty body data => name :: expr_get_forall_bound_vars body 
+| _ => []
+
+def Lean.Expr.getForallBoundVars: Expr -> List Name := expr_get_forall_bound_vars
 
 -- | disgusting. Please fix to a real parser later @andres
 partial def parseInt (n: Int) (s: String): Option Int :=
@@ -147,9 +187,28 @@ partial def parseInt (n: Int) (s: String): Option Int :=
   then some n
   else parseInt (n - 1) s
 
-partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) (state: EggState): TacticM ((List EggRewrite) × EggState) :=
+
+partial def addUniversalEqualitiesForall (rw: Expr) (rw_type: Expr) (state: EggState): TacticM ((List EggRewrite) × EggState) := 
+  if rw_type.isForall
+  then do 
+    let rw_type_body : Expr := rw_type.getForallBody
+    let rw_type_vars: List Name := rw_type.getForallBoundVars
+    let eqbody? <- matchEq? rw_type_body
+    let (rw_eq_type, rw_lhs, rw_rhs)  <-  
+        match eqbody? with
+        | some (rw_eq_type, rw_lhs, rw_rhs) => 
+            pure (rw_eq_type, rw_lhs, rw_rhs) 
+        | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
+    let lhs <- exprToString rw_lhs rw_type_vars
+    let rhs <- exprToString rw_rhs rw_type_vars
+    -- dbg_trace "LHS: {lhs} | RHS: {rhs}"
+    let (rw_name, state) := gensymRewriteName rw state
+    let egg_rewrite := { name := rw_name, lhs := toString lhs, rhs := toString rhs : EggRewrite }
+    return ([egg_rewrite], state)
+  else throwError "expected ∀"
+
+partial def addEqualities (bound: List Name) (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) (state: EggState): TacticM ((List EggRewrite) × EggState) :=
   withMainContext do
-    dbg_trace "===addEqualities running==="
     let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
     let rw_type <- inferType rw
     let lctx <- getLCtx
@@ -159,30 +218,45 @@ partial def addEqualities (equalityTermType : Expr) (accum : List EggRewrite) (r
       let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
       if is_well_typed
       then
-        let lhs_name := exprToString lctx rw_lhs
-        let rhs_name := exprToString lctx rw_rhs
-        let (rw_name, state) := ensureRewriteExists rw rw_type rw_stx state
-        dbg_trace "1) rw_name: {rw_name} | rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
+        let lhs_name <- exprToString rw_lhs bound
+        let rhs_name <- exprToString rw_rhs bound
+        let (rw_name, state) := gensymRewriteName rw  state
+        -- dbg_trace "1) rw_name: {rw_name} | rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
         let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name : EggRewrite }
         return (egg_rewrite :: accum, state)
       else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
       f!" Expected to equate terms of type |{equalityTermType}|")
-   | none =>
+   | none => do
       match rw_type with
-        | Expr.forallE n t b _ =>
-           let possibleInsts : List Name <- findMatchingExprs t
-           let applications : List Syntax <- possibleInsts.mapM λ i:Name =>
+        | Expr.forallE n t b _ => do
+          -- vvv new code, that implements the rules of the form (mul ?a ?b) = (mul ?b ?a)
+          --  let (ys', state) <- (addEqualities (n::bound) equalityTermType [] (Syntax.mkApp rw_stx #[mkIdent n]) state)
+          let (ys, state) <- addUniversalEqualitiesForall rw rw_type state
+          /-
+          let rw_type_body : Expr := rw_type.getForallBody
+          let rw_type_vars: List Name := rw_type.getForallBoundVars
+          dbg_trace "forall expr: {rw_type} | vars: {rw_type_vars} | body: {rw_type_body}"
+          -/
+          /-
+          match (<- matchEq? rw_type_body) with
+            | some (rw_eq_type, rw_lhs, rw_rhs) => 
+                throwError "unimplemented" 
+            | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
+          -- vvv old code, that is responsible for applying the values to all combinations vvv
+          -/
+          let possibleInsts : List Name <- findMatchingExprs t
+          let applications : List Syntax <- possibleInsts.mapM λ i:Name =>
                let i_stx := Array.mk [mkIdent i]
                let res := Syntax.mkApp rw_stx i_stx
                return res
-           let (applyInsts', state)  <-
+          let (applyInsts', state)  <-
               applications.foldlM 
                 (fun xs_and_state stx => do
                   let xs := xs_and_state.fst 
                   let state := xs_and_state.snd 
-                  let (xs', state) <- (addEqualities equalityTermType [] stx state)
+                  let (xs', state) <- (addEqualities bound equalityTermType [] stx state)
                   return (xs' ++ xs, state)) ([], state)
-           return (applyInsts', state)
+          return (ys ++applyInsts', state)
            
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
      -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
@@ -208,7 +282,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
         (fun xs_and_state stx => do 
           let xs := xs_and_state.fst 
           let state := xs_and_state.snd 
-          let (xs', state) <- (addEqualities equalityTermType xs stx state)
+          let (xs', state) <- (addEqualities (bound := []) equalityTermType xs stx state)
           return (xs ++ xs', state))
     let explanations : List EggExplanation <- (liftMetaMAtMain fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
@@ -221,9 +295,11 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           else return accum)
 
       let out := "\n====\n"
-      let out := out ++ f!"-eq.t: {equalityTermType}\n"
-      let out := out ++ f!"-eq.lhs: {equalityLhs} / {exprToString lctx equalityLhs}\n"
-      let out := out ++ f!"-eq.rhs: {equalityRhs} / {exprToString lctx equalityRhs}\n"
+      let lhs_str : Format <- exprToString equalityLhs (bound := [])
+      let rhs_str : Format <- exprToString equalityRhs (bound := [])
+      let out := out ++ f!"-eq.t: {equalityTermType}"
+      let out := out ++ f!"-eq.lhs: {equalityLhs} / {lhs_str}"
+      let out := out ++ f!"-eq.rhs: {equalityRhs} / {rhs_str}\n"
       let out := out ++ f!"-hypothesis of type [eq.t]: {hypsOfEqualityTermType}\n"
       -- let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
       let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
@@ -236,8 +312,8 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
       dbg_trace out
       -- | forge a request.
       let req : EggRequest := {
-        target_lhs := toString (exprToString lctx equalityLhs)
-        , target_rhs := toString (exprToString lctx equalityRhs)
+        target_lhs := toString (lhs_str)
+        , target_rhs := toString (rhs_str)
         , rewrites := egg_rewrites}
       -- | Invoke accursed magic to send the request.
       let req_json : String := req.toJson
@@ -251,6 +327,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           -- stdout := IO.Process.Stdio.null,
           stderr := IO.Process.Stdio.null
         }
+      FS.writeFile s!"/tmp/egg.json" req_json
       dbg_trace "3) Spanwed egg server process. Writing stdin..."
       let (stdin, egg_server_process) ← egg_server_process.takeStdin
       stdin.putStr req_json
@@ -312,8 +389,30 @@ def not_rewrite : Int := 42
 def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
--- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
 
+/-
+theorem inv_mul_cancel_left (G: Type) 
+  (inv: G → G)
+  (mul: G → G → G)
+  (one: G)
+  (x y: G)
+  (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
+  (assocMul': forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
+  (oneMul: forall (a: G), mul a one = a)
+  (oneMul': forall (a: G), mul one a = a)
+  (invLeft: forall (a: G), mul (inv a) a = one)
+  (invLeft':  mul (inv x) x = one)
+  (invLeft'':  mul (inv y) y = one)
+  (invRight: forall (a: G), mul a (inv a) = one)
+  (invRight':  one = mul x (inv x))
+  (invRight'': one = mul y (inv y)): mul (inv y) (inv x) = inv (mul x y) := by {
+  rawEgg [assocMul, assocMul', oneMul, oneMul', invLeft', invLeft'',  invRight', invRight'']
+}
+-/
+
+
+-- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
+/-
 -- | test that we can run rewrites
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
@@ -376,25 +475,6 @@ theorem testArrows
       //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
 -/
 
-theorem inv_mul_cancel_left (G: Type) 
-  (inv: G → G)
-  (mul: G → G → G)
-  (one: G)
-  (x y: G)
-  (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
-  (assocMul': forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
-  (oneMul: forall (a: G), mul a one = a)
-  (oneMul': forall (a: G), mul one a = a)
-  (invLeft: forall (a: G), mul (inv a) a = one)
-  (invLeft':  mul (inv x) x = one)
-  (invLeft'':  mul (inv y) y = one)
-  (invRight: forall (a: G), mul a (inv a) = one)
-  (invRight':  one = mul x (inv x))
-  (invRight'': one = mul y (inv y)): mul (inv y) (inv x) = inv (mul x y) := by {
-  rawEgg [assocMul, assocMul', oneMul, oneMul', invLeft', invLeft'',  invRight', invRight'']
-}
-
-
 theorem assoc_instantiate(G: Type) 
   (mul: G → G → G)
   (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
@@ -409,9 +489,19 @@ theorem assoc_instantiate(G: Type)
 
 
 #print testArrows
+-/
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
  rawEgg []
  sorry
 -/
+
+def eof := 1
+
+theorem testInstantiation2
+  (group_inv: forall (g: Int), g - g  = 0)
+  (h: Int) (k: Int): h - h = k - k := by
+ rawEgg [group_inv]
+#print testInstantiation2
+ -- TODO: instantiate universally quantified equalities too
