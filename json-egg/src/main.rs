@@ -92,9 +92,9 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> {
     match (t.forward_rule, t.backward_rule){
         (Some(rule), _) => {
-            Some(vec!["fwd".to_string(), rule.as_str().to_string(), t.node.to_string()])
+            Some(vec!["fwd".to_string(), rule.as_str().to_string()])
         },
-        (_, Some(rule)) => Some(vec!["bwd".to_string(), rule.as_str().to_string(), t.node.to_string()]),
+        (_, Some(rule)) => Some(vec!["bwd".to_string(), rule.as_str().to_string()]),
         (None, None) => {
             for c in &t.children {
                 match extract_rule_from_flat_term(&c) {
@@ -142,11 +142,11 @@ fn handle_request(req: Request) -> Response {
                 let flat_explanation : &FlatExplanation<SymbolLang> =
                     explanation.make_flat_explanation();
 
-                println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
+                // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
                 let mut rules : Vec<Vec<String>> = Vec::new();
 
-                println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
+                // println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
                 for e in flat_explanation {
                     let rule = extract_rule_from_flat_term(e);
                     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);

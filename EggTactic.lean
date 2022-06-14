@@ -254,9 +254,9 @@ partial def addEqualities (bound: List Name) (equalityTermType : Expr) (accum : 
                 (fun xs_and_state stx => do
                   let xs := xs_and_state.fst 
                   let state := xs_and_state.snd 
-                  let (xs', state) <- (addEqualities bound equalityTermType [] stx state)
-                  return (xs' ++ xs, state)) ([], state)
-          return (ys ++applyInsts', state)
+                  let (xs', state) <- (addEqualities bound equalityTermType xs stx state)
+                  return (xs', state)) (accum, state)
+          return (applyInsts' ++ ys, state)
            
         | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
      -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
@@ -283,10 +283,10 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
           let xs := xs_and_state.fst 
           let state := xs_and_state.snd 
           let (xs', state) <- (addEqualities (bound := []) equalityTermType xs stx state)
-          return (xs ++ xs', state))
+          return (xs', state))
     let explanations : List EggExplanation <- (liftMetaMAtMain fun mvarId => do
       -- let (h, mvarId) <- intro1P mvarId
-      -- let goals <- apply mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
+      -- let goals <- f mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
       let lctx <- getLCtx
       let mctx <- getMCtx
       let hypsOfEqualityTermType <- lctx.foldlM (init := []) (fun accum decl =>  do
@@ -390,29 +390,11 @@ def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
 
-/-
-theorem inv_mul_cancel_left (G: Type) 
-  (inv: G → G)
-  (mul: G → G → G)
-  (one: G)
-  (x y: G)
-  (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
-  (assocMul': forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
-  (oneMul: forall (a: G), mul a one = a)
-  (oneMul': forall (a: G), mul one a = a)
-  (invLeft: forall (a: G), mul (inv a) a = one)
-  (invLeft':  mul (inv x) x = one)
-  (invLeft'':  mul (inv y) y = one)
-  (invRight: forall (a: G), mul a (inv a) = one)
-  (invRight':  one = mul x (inv x))
-  (invRight'': one = mul y (inv y)): mul (inv y) (inv x) = inv (mul x y) := by {
-  rawEgg [assocMul, assocMul', oneMul, oneMul', invLeft', invLeft'',  invRight', invRight'']
-}
--/
+
 
 
 -- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
-/-
+
 -- | test that we can run rewrites
 theorem testSuccess : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
@@ -459,21 +441,6 @@ theorem testArrows
   (h: Int) (k: Int): h - h = k - k := by
   rawEgg [group_inv]
 
-/-  
-      rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
-      rw!("assoc-mul'"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
-      rw!("one-mul";  "(* 1 ?a)" => "?a"),
-      rw!("one-mul'";  "?a" => "(* 1 ?a)"),
-      rw!("inv-left";  "(* (^-1 ?a) ?a)" => "1"),
-      rw!("inv-left'";  "1" => "(* (^-1 a) a)"),
-      rw!("inv-left''";  "1" => "(* (^-1 b) b)"),
-      rw!("mul-one";  "(* ?a 1)" => "?a"),
-      rw!("mul-one'";  "?a" => "(* ?a 1)" ),
-      rw!("inv-right";  "(* ?a (^-1 ?a))" => "1"),
-      rw!("inv-right'";  "1" => "(* a (^-1 a))"),
-      rw!("inv-right''";  "1" => "(* b (^-1 b))"),
-      //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
--/
 
 theorem assoc_instantiate(G: Type) 
   (mul: G → G → G)
@@ -489,7 +456,7 @@ theorem assoc_instantiate(G: Type)
 
 
 #print testArrows
--/
+
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
@@ -499,9 +466,37 @@ theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
 
 def eof := 1
 
-theorem testInstantiation2
+theorem testInstantiation3
   (group_inv: forall (g: Int), g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
  rawEgg [group_inv]
-#print testInstantiation2
+#print testInstantiation3
  -- TODO: instantiate universally quantified equalities too
+
+/-  
+      rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
+      rw!("assoc-mul'"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
+      rw!("one-mul";  "(* 1 ?a)" => "?a"),
+      rw!("one-mul'";  "?a" => "(* 1 ?a)"),
+      rw!("inv-left";  "(* (^-1 ?a) ?a)" => "1"),
+      rw!("inv-left'";  "1" => "(* (^-1 a) a)"),
+      rw!("inv-left''";  "1" => "(* (^-1 b) b)"),
+      rw!("mul-one";  "(* ?a 1)" => "?a"),
+      rw!("mul-one'";  "?a" => "(* ?a 1)" ),
+      rw!("inv-right";  "(* ?a (^-1 ?a))" => "1"),
+      rw!("inv-right'";  "1" => "(* a (^-1 a))"),
+      rw!("inv-right''";  "1" => "(* b (^-1 b))"),
+      //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
+-/
+theorem inv_mul_cancel_left (G: Type) 
+  (inv: G → G)
+  (mul: G → G → G)
+  (one: G)
+  (x: G)
+  (assocMul: forall (a b c: G), mul a (mul b c) = (mul (mul a b) c))
+  (invLeft: forall (a: G), mul (inv a) a = one)
+  (mulOne: forall (a: G), a = mul a one)
+  (invRightX: one = mul x (inv x)): (inv (inv x) = x) := by {
+  rawEgg [assocMul, invLeft, mulOne, invRightX]
+}
+#print inv_mul_cancel_left
