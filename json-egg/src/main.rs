@@ -5,6 +5,8 @@ use egg::{rewrite as rw, *};
 use std::{io};
 // use std::{sync::mpsc::Receiver};
 use std::str::FromStr;
+use std::collections::{VecDeque, vec_deque};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use egg::SymbolLang;
 use egg::Explanation;
@@ -86,28 +88,49 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
     )
 }
 
-
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
-fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> {
-    match (t.forward_rule, t.backward_rule){
-        (Some(rule), _) => {
-            Some(vec!["fwd".to_string(), rule.as_str().to_string()])
-        },
-        (_, Some(rule)) => Some(vec!["bwd".to_string(), rule.as_str().to_string()]),
+// TODO: rewrites is poor asymptotically. Switch to HashMap
+fn extract_rule_from_flat_term(runner: &Runner, rewrites: &HashMap<Symbol, Rewrite>, t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> {
+    let (direction, rule) = match (t.forward_rule, t.backward_rule){
+        (Some(rule), _) =>
+            ("fwd".to_string(), rule),
+        (_, Some(rule)) => ("bwd".to_string(), rule),
         (None, None) => {
             for c in &t.children {
-                match extract_rule_from_flat_term(&c) {
-                    Some(mut rule) => {
-                        rule.push(t.node.to_string());
-                        return Some(rule)
-                    },
+                match extract_rule_from_flat_term(runner, rewrites, &c) {
+                    Some(rule) => { return Some(rule) },
                     None => ()
                 }
             }
             return None
         }
+    };
+
+    let node: &SymbolLang = &t.node;
+    let rewrite_option = rewrites.get(&rule);
+    let rewrite = rewrite_option.unwrap();
+
+    let toplevel_matches =
+        rewrite.searcher.search(&runner.egraph);
+    let toplevel_match = toplevel_matches.first().unwrap();
+    let mut out = vec![direction, rule.as_str().to_string()];
+
+    if let Some(subst) = toplevel_match.substs.first() {
+        for var in rewrite.searcher.vars() {
+            if let Some(val_id) = subst.get(var) {
+                // let val_node_eclass = &runner.egraph[*val_id];
+
+                let mut extractor = Extractor::new(&runner.egraph, AstSize);
+                let (_, val_node) = extractor.find_best(*val_id);
+                // let val_node = val_node_eclass.nodes.first().unwrap();
+                out.push(var.to_string());
+                out.push(val_node.to_string());
+            }
+        }
     }
+
+    return Some(out);
 
 }
 
@@ -116,8 +139,11 @@ fn handle_request(req: Request) -> Response {
         Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
 
             let mut new_rewrites = vec![];
-            for rw in rewrites {
-                new_rewrites.push(respond_error!(parse_rewrite(&rw)));
+            let mut new_rewrites_hash : HashMap<Symbol, Rewrite> = HashMap::new();
+            for rw_str in rewrites {
+                let rw = respond_error!(parse_rewrite(&rw_str));
+                new_rewrites_hash.insert(rw.name, rw.clone());
+                new_rewrites.push(rw.clone());
             }
             // let targetLhsExpr : Result<RecExpr, _> = respond_error!(targetLhs.parse());
             // let e : RecExpr = eresult.expect("expected parseable expression");
@@ -148,7 +174,7 @@ fn handle_request(req: Request) -> Response {
 
                 // println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
                 for e in flat_explanation {
-                    let rule = extract_rule_from_flat_term(e);
+                    let rule = extract_rule_from_flat_term(&runner, &new_rewrites_hash, e);
                     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
                     match rule  {
                         Some(r) => {
