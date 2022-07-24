@@ -204,59 +204,61 @@ def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit :=
 /-
 Create a regular equality of the form lhs = rhs
 -/
-def addBareEquality (rw: Expr) (rw_type: Expr): EggM Unit := do
-  let (rw_eq_type, rw_lhs, rw_rhs)  ←
-      match (← matchEq? rw_type) with
-      | some (rw_eq_type, rw_lhs, rw_rhs) => 
-          pure (rw_eq_type, rw_lhs, rw_rhs) 
-      | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
-  let lhs ← exprToString rw_lhs 
-  let rhs ← exprToString rw_rhs 
-  addEggRewrite rw lhs rhs
+def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
+  dbg_trace "**adding bareEquality {rw} : {ty}"
+  let (lhs, rhs)  ←
+      match (← matchEq? ty) with
+      | some (_, lhs, rhs) => 
+          pure (lhs, rhs) 
+      | none => throwError f!"**expected type to be equality: {ty}"
+  addEggRewrite rw (← exprToString lhs) (← exprToString rhs)
 
 /-
 Create an equality with MVars
 -/
-def addForallMVarEquality (rw: Expr) (rw_type: Expr): EggM Unit := do 
-  tacticGuard rw_type.isForall "expected ∀ at mvar equality"
-  let (ms, binders, rw_type_body) ← forallMetaTelescope rw_type
-  addBareEquality rw rw_type_body
+def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do 
+  tacticGuard ty.isForall "**expected ∀ at mvar equality"
+  dbg_trace "**adding forallMVarEquality {rw} : {ty}"
+  let (ms, binders, tyNoForall) ← forallMetaTelescope ty
+  addBareEquality rw tyNoForall
 
 
 --  explode an equality with ∀ by creating many variations, from the local context.
 -- It is well founded because we destructure the inductive type, but lean is unable to
 -- infer this
-partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (rw_type: Expr): EggM Unit := do 
-  if let Expr.forallE forallName forallTy forallBody _ := rw_type then do {
-   withExprsOfType goal forallTy $ λ instantiation => do 
-      addForallExplodedEquality_ goal rw (←  mkAppM' forallTy #[instantiation])
+partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do 
+  if let Expr.forallE x xty body _ := ty then do {
+  dbg_trace "**forall is (FA [{x} : {xty}] {body})"
+   withExprsOfType goal xty $ λ xval => do 
+      dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
+      -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
+      addForallExplodedEquality_ goal rw (← instantiateForall ty #[xval])
   } else {
-    addBareEquality rw rw_type
+    addBareEquality rw ty
   }
 
 
 -- See `addForallExplodedEquality_`
-def addForallExplodedEquality (goal: MVarId) (rw: Expr) (rw_type: Expr): EggM Unit := do 
-  tacticGuard rw_type.isForall "expected ∀ at exploded equality"
-  addForallExplodedEquality_ goal rw rw_type
+def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do 
+  tacticGuard ty.isForall "**expected ∀ at exploded equality"
+  dbg_trace "**adding forallExplodedEquality {rw} : {ty}"
+  addForallExplodedEquality_ goal rw ty
 
 -- Add an expression into the EggM context.
-def addExpr (goal: MVarId) (equality?: Expr): EggM Unit := do
-   if equality?.isForall then do
-     let equalityType <- inferType equality?
-     addForallExplodedEquality_ goal equality? equalityType
-     addForallMVarEquality equality? equalityType
-   else if equality?.isEq then do
-     addBareEquality equality? (← inferType equality?)
+def addExpr (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
+   if ty.isForall then do
+     addForallExplodedEquality_ goal rw ty
+     addForallMVarEquality rw ty
+   else if ty.isEq then do
+     addBareEquality rw ty
 
 -- Add all equalities from the local context 
 def addAllLocalContextEqualities (goal: MVarId): EggM Unit := 
   withMVarContext goal do
     for decl in (← getLCtx) do 
-       addExpr goal decl.toExpr
+      dbg_trace "**processing local declaration {decl.userName} := {decl.toExpr} : {← inferType decl.toExpr}"
+      addExpr goal decl.toExpr (← inferType decl.toExpr)
 
-
-#check matchEq?
 
 
 -- Do the dirty work of sending a string, and reading the string out from stdout
@@ -327,6 +329,7 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic => withMainContext do
       | .none => throwError "Egg: target not equality: {target}"
       | .some eq => pure eq
   let rewrites ← (addAllLocalContextEqualities  (← getMainGoal)).getRewrites
+  dbg_trace (f!"13) have rewrites {rewrites}")
   let eggRequest := { 
       targetLhs := (← exprToString goalLhs),
       targetRhs := (← exprToString goalRhs),
