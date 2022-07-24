@@ -8,8 +8,7 @@ import Lean.Elab.Tactic.Config
 import Lean.Data.Json
 import Lean.Elab.Deriving.FromToJson
 
-open Lean Meta Elab Tactic
-open Lean.Elab.Term
+open Lean Elab Meta Tactic Term
 open IO
 open System
 
@@ -21,6 +20,10 @@ structure EggRewrite where
   name: String
   lhs: String
   rhs: String
+  rw: Expr
+
+instance : Inhabited EggRewrite where
+  default := EggRewrite.mk "default" "default" "default" default
 
 inductive EggRewriteDirection where
   | Forward
@@ -60,7 +63,7 @@ unsafe def unsafePerformIO [Inhabited a] (io: IO a): a :=
 def performIO [Inhabited a] (io: IO a): a := Inhabited.default
 
 
-def surround_quotes (s: String): String :=
+def surroundQuotes (s: String): String :=
  "\"" ++ s ++ "\""
 def surround_escaped_quotes (s: String): String :=
  "\\\"" ++ s ++ "\\\""
@@ -68,9 +71,9 @@ def surround_escaped_quotes (s: String): String :=
 
 def EggRewrite.toJson (rewr: EggRewrite) :=
   "{"
-    ++ surround_quotes "name" ++ ":" ++ surround_quotes rewr.name ++ ","
-    ++ surround_quotes "lhs" ++ ":" ++ surround_quotes rewr.lhs ++ ","
-    ++ surround_quotes "rhs" ++ ":" ++ surround_quotes rewr.rhs ++
+    ++ surroundQuotes "name" ++ ":" ++ surroundQuotes rewr.name ++ ","
+    ++ surroundQuotes "lhs" ++ ":" ++ surroundQuotes rewr.lhs ++ ","
+    ++ surroundQuotes "rhs" ++ ":" ++ surroundQuotes rewr.rhs ++
   "}"
 
 instance : ToString EggRewrite where
@@ -78,16 +81,16 @@ instance : ToString EggRewrite where
 
 
 structure EggRequest where
-  target_lhs: String
-  target_rhs: String
+  targetLhs: String
+  targetRhs: String
   rewrites: List EggRewrite
 
 def EggRequest.toJson (e: EggRequest): String :=
   "{"
-  ++ surround_quotes "request"  ++  ":" ++ surround_quotes "perform-rewrite" ++ ","
-  ++ surround_quotes "target-lhs"  ++  ":" ++ surround_quotes (e.target_lhs) ++ ","
-  ++ surround_quotes "target-rhs"  ++  ":" ++ surround_quotes (e.target_rhs) ++ ","
-  ++ surround_quotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
+  ++ surroundQuotes "request"  ++  ":" ++ surroundQuotes "perform-rewrite" ++ ","
+  ++ surroundQuotes "target-lhs"  ++  ":" ++ surroundQuotes (e.targetLhs) ++ ","
+  ++ surroundQuotes "target-rhs"  ++  ":" ++ surroundQuotes (e.targetRhs) ++ ","
+  ++ surroundQuotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
   ++ "}"
 
 def Lean.Json.getStr! (j: Json): String :=
@@ -110,51 +113,60 @@ match n with
 
 def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n 
 
-partial def exprToString_ (e: Expr) (bound: List Name): MetaM String :=   
+
+  /-
+  | bvar    : Nat → Data → Expr                       -- bound variables
+  | fvar    : FVarId → Data → Expr                    -- free variables
+  | mvar    : MVarId → Data → Expr                    -- meta variables
+  | sort    : Level → Data → Expr                     -- Sort
+  | const   : Name → List Level → Data → Expr         -- constants
+  | app     : Expr → Expr → Data → Expr               -- application
+  | lam     : Name → Expr → Expr → Data → Expr        -- lambda abstraction
+  | forallE : Name → Expr → Expr → Data → Expr        -- (dependent) arrow
+  | letE    : Name → Expr → Expr → Expr → Data → Expr -- let expressions
+  | lit     : Literal → Data → Expr                   -- literals
+  | mdata   : MData → Expr → Data → Expr              -- metadata
+  | proj    : Name → Nat → Expr → Data → Expr         -- projection
+-/
+
+/-
+convert this expression into a string, along with the names of the
+bound variables.
+-/
+def exprToString (e: Expr): MetaM String :=   
 match e with 
   | Expr.const  name levels data => pure (name.toString)
-  | Expr.bvar ix data => 
-    match (bound.get? ix) with 
-    | some name => pure ("?" ++ name.toString)
-    | none => throwError s!"no bound name known for index {ix} | expr: {e} | bound: {bound}"
-  | Expr.fvar id data => 
-      if bound.contains id.name
-      then throwError s!"found bound name: {id.name}"
-      else pure (id.name.toString)
+  | Expr.bvar ix data => throwError s!"expected no bound variables, we use locally nameless!"
+  | Expr.fvar id data => pure (id.name.toString)
+  | Expr.mvar id data => pure ("?" ++ (id.name.toString))
   | Expr.lit (.natVal n) data => pure (toString n)
   | Expr.app     l r data => do 
-     let lstr <- exprToString_ l bound
-     let rstr <- exprToString_ r bound
+     let lstr <- exprToString l
+     let rstr <- exprToString r
      pure $ "(ap " ++ lstr ++ " " ++ rstr ++ ")"
---   | Expr.lit lit data => lit.
---  | Expr.forallE name type body data => exprToString_ body (name::bound)
   | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
 
 
-
-def exprToString (e: Expr) (bound: List Name) : MetaM Format := do
-  let s <- exprToString_ e bound
-  -- pure (surround_escaped_quotes s)
-  pure s
-    -- if e.isFVar then toString (lctx.getFVar! e).userName else toString e
-
-def findMatchingExprs (t : Expr) : TacticM (List Name) :=
-  withMainContext do
-    let lctx <- getLCtx
-    lctx.foldlM (init := []) fun (accum : List Name) (ldecl: LocalDecl) => do
-      let ldecl_expr := ldecl.toExpr -- Find the expression of the declaration.
-      let ldecl_type <- inferType ldecl_expr
-      let res := if ldecl_type == t then ldecl.userName :: accum else accum
-      return res -- why won't return $ if ... work?
-
-open Lean.Meta
-
-#check withLCtx 
-
 structure EggState where
-  ix: Nat
-  name2expr: List (Int × Expr)
+  ix: Nat := 0
+  name2expr: List (Int × Expr) := []
+  rewrites: List EggRewrite := []
   deriving Inhabited
+
+abbrev EggM (α: Type) := StateT EggState TermElabM α
+
+def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do 
+  pure (← egg.run default).snd.rewrites
+
+-- Find expressions of a given type in the local context
+def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit := do
+   withMVarContext g do
+    let lctx <- getLCtx
+    for ldecl in lctx do 
+      let ldecl_type <- inferType ldecl.toExpr
+      if (← isExprDefEq ldecl_type t) then f ldecl.toExpr
+
+
 
 instance : ToString EggState where
   toString expl :=
@@ -169,219 +181,281 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     go state.name2expr
 
 
-partial def gensymRewriteName (rw: Expr) (state: EggState): (String × EggState) :=
-  let i := state.ix
-  (toString i, { ix := i + 1, name2expr := ((i, rw) :: state.name2expr) : EggState })
+partial def addEggRewrite (rw: Expr) (lhs: String) (rhs: String): EggM Unit := do
+  dbg_trace s!"MK_EGG_REWRITE {rw}"
+  let i := (← get).ix
+  let egg_rewrite := { name := toString i, lhs := lhs, rhs := rhs, rw := rw : EggRewrite }
+  modify (fun state => { state with ix := i + 1, name2expr := (i, rw) :: state.name2expr, rewrites := egg_rewrite :: state.rewrites })
 
 def expr_get_forall_bound_vars: Expr -> List Name 
 | Expr.forallE name ty body data => name :: expr_get_forall_bound_vars body 
 | _ => []
 
-def Lean.Expr.getForallBoundVars: Expr -> List Name := expr_get_forall_bound_vars
-
 -- | disgusting. Please fix to a real parser later @andres
-partial def parseInt (n: Int) (s: String): Option Int :=
-  if n < 0 
-  then none
-  else if toString n == s
-  then some n
-  else parseInt (n - 1) s
+partial def parseNat (s: String) (counter: Nat := 100) : Option Nat :=
+  if toString counter == s
+  then some counter
+  else if counter == 0 then none else parseNat s (counter - 1)
 
 
-partial def addUniversalEqualitiesForall (rw: Expr) (rw_type: Expr) (state: EggState): TacticM ((List EggRewrite) × EggState) := 
-  if rw_type.isForall
-  then do 
-    let rw_type_body : Expr := rw_type.getForallBody
-    let rw_type_vars: List Name := rw_type.getForallBoundVars
-    let eqbody? <- matchEq? rw_type_body
-    let (rw_eq_type, rw_lhs, rw_rhs)  <-  
-        match eqbody? with
-        | some (rw_eq_type, rw_lhs, rw_rhs) => 
-            pure (rw_eq_type, rw_lhs, rw_rhs) 
-        | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
-    let lhs <- exprToString rw_lhs rw_type_vars
-    let rhs <- exprToString rw_rhs rw_type_vars
-    -- dbg_trace "LHS: {lhs} | RHS: {rhs}"
-    let (rw_name, state) := gensymRewriteName rw state
-    let egg_rewrite := { name := rw_name, lhs := toString lhs, rhs := toString rhs : EggRewrite }
-    return ([egg_rewrite], state)
-  else throwError "expected ∀"
+def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit := 
+  if !shouldSucceed? then throwError err else pure ()
 
-partial def addEqualities (bound: List Name) (equalityTermType : Expr) (accum : List EggRewrite) (rw_stx : Syntax) (state: EggState): TacticM ((List EggRewrite) × EggState) :=
-  withMainContext do
-    let rw <-  (Lean.Elab.Tactic.elabTerm rw_stx (Option.none))
-    let rw_type <- inferType rw
-    let lctx <- getLCtx
-    match (<- matchEq? rw_type) with
-   | some (rw_eq_type, rw_lhs, rw_rhs) => do
-      -- | check that rewrite is of the correct type.
-      let is_well_typed <- isExprDefEq rw_eq_type equalityTermType
-      if is_well_typed
-      then
-        let lhs_name <- exprToString rw_lhs bound
-        let rhs_name <- exprToString rw_rhs bound
-        let (rw_name, state) := gensymRewriteName rw  state
-        -- dbg_trace "1) rw_name: {rw_name} | rw_stx: {rw_stx} | rw: {rw} | rw_eq_type: {rw_eq_type} | lhs: {lhs_name} | rhs: {rhs_name}"
-        let egg_rewrite := { name := rw_name, lhs := toString lhs_name, rhs := toString rhs_name : EggRewrite }
-        return (egg_rewrite :: accum, state)
-      else throwError (f!"Rewrite |{rw_stx} (term={rw})| incorrectly equates terms of type |{rw_eq_type}|." ++
-      f!" Expected to equate terms of type |{equalityTermType}|")
-   | none => do
-      match rw_type with
-        | Expr.forallE n t b _ => do
-          -- vvv new code, that implements the rules of the form (mul ?a ?b) = (mul ?b ?a)
-          --  let (ys', state) <- (addEqualities (n::bound) equalityTermType [] (Syntax.mkApp rw_stx #[mkIdent n]) state)
-          let (ys, state) <- addUniversalEqualitiesForall rw rw_type state
-          /-
-          let rw_type_body : Expr := rw_type.getForallBody
-          let rw_type_vars: List Name := rw_type.getForallBoundVars
-          dbg_trace "forall expr: {rw_type} | vars: {rw_type_vars} | body: {rw_type_body}"
-          -/
-          /-
-          match (<- matchEq? rw_type_body) with
-            | some (rw_eq_type, rw_lhs, rw_rhs) => 
-                throwError "unimplemented" 
-            | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
-          -- vvv old code, that is responsible for applying the values to all combinations vvv
-          -/
-          let possibleInsts : List Name <- findMatchingExprs t
-          let applications : List Syntax <- possibleInsts.mapM λ i:Name =>
-               let i_stx := Array.mk [mkIdent i]
-               let res := Syntax.mkApp rw_stx i_stx
-               return res
-          let (applyInsts', state)  <-
-              applications.foldlM 
-                (fun xs_and_state stx => do
-                  let xs := xs_and_state.fst 
-                  let state := xs_and_state.snd 
-                  let (xs', state) <- (addEqualities bound equalityTermType xs stx state)
-                  return (xs', state)) (accum, state)
-          return (applyInsts' ++ ys, state)
-           
-        | _ => throwError "Rewrite |{rw_stx} (term={rw})| must be an equality. Found |{rw} : {rw_type}| which is not an equality"
-     -- let tm <- Lean.Elab.Tactic.elabTermEnsuringType rw_stx (Option.some target)
-     -- let tm <- Term.elabTerm rw_stx (Option.some target)
-     -- return (tm :: accum)
+/-
+Create a regular equality of the form lhs = rhs
+-/
+def addBareEquality (rw: Expr) (rw_type: Expr): EggM Unit := do
+  let (rw_eq_type, rw_lhs, rw_rhs)  ←
+      match (← matchEq? rw_type) with
+      | some (rw_eq_type, rw_lhs, rw_rhs) => 
+          pure (rw_eq_type, rw_lhs, rw_rhs) 
+      | none => throwError f!"expected ∀ expression type to have equality body: {rw_type}"
+  let lhs ← exprToString rw_lhs 
+  let rhs ← exprToString rw_rhs 
+  addEggRewrite rw lhs rhs
 
-elab "rawEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
-  let goals <- getGoals
+/-
+Create an equality with MVars
+-/
+def addForallMVarEquality (rw: Expr) (rw_type: Expr): EggM Unit := do 
+  tacticGuard rw_type.isForall "expected ∀ at mvar equality"
+  let (ms, binders, rw_type_body) ← forallMetaTelescope rw_type
+  addBareEquality rw rw_type_body
+
+
+--  explode an equality with ∀ by creating many variations, from the local context.
+-- It is well founded because we destructure the inductive type, but lean is unable to
+-- infer this
+partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (rw_type: Expr): EggM Unit := do 
+  if let Expr.forallE forallName forallTy forallBody _ := rw_type then do {
+   withExprsOfType goal forallTy $ λ instantiation => do 
+      addForallExplodedEquality_ goal rw (←  mkAppM' forallTy #[instantiation])
+  } else {
+    addBareEquality rw rw_type
+  }
+
+
+-- See `addForallExplodedEquality_`
+def addForallExplodedEquality (goal: MVarId) (rw: Expr) (rw_type: Expr): EggM Unit := do 
+  tacticGuard rw_type.isForall "expected ∀ at exploded equality"
+  addForallExplodedEquality_ goal rw rw_type
+
+-- Add an expression into the EggM context.
+def addExpr (goal: MVarId) (equality?: Expr): EggM Unit := do
+   if equality?.isForall then do
+     let equalityType <- inferType equality?
+     addForallExplodedEquality_ goal equality? equalityType
+     addForallMVarEquality equality? equalityType
+   else if equality?.isEq then do
+     addBareEquality equality? (← inferType equality?)
+
+-- Add all equalities from the local context 
+def addAllLocalContextEqualities (goal: MVarId): EggM Unit := 
+  withMVarContext goal do
+    for decl in (← getLCtx) do 
+       addExpr goal decl.toExpr
+
+
+#check matchEq?
+
+
+-- Do the dirty work of sending a string, and reading the string out from stdout
+def runEggRequestRaw (requestJson: String): MetaM String := do
+    let eggProcess <- IO.Process.spawn
+      { cmd := egg_server_path,
+        -- stdin := IO.Process.Stdio.piped,
+        stdout := IO.Process.Stdio.piped,
+        stdin := IO.Process.Stdio.piped,
+        -- stdout := IO.Process.Stdio.null,
+        stderr := IO.Process.Stdio.null
+      }
+    FS.writeFile s!"/tmp/egg.json" requestJson
+    dbg_trace "3) Spanwed egg server process. Writing stdin..."
+    let (stdin, eggProcess) ← eggProcess.takeStdin
+    stdin.putStr requestJson
+    dbg_trace "5) Wrote stdin. Setting up stdout..."
+    let stdout ← IO.asTask eggProcess.stdout.readToEnd Task.Priority.dedicated
+    dbg_trace "6) Setup stdout. Waiting for exitCode..."
+    let exitCode : UInt32 <- eggProcess.wait
+    dbg_trace "7) got exitCode ({exitCode}). Waiting for stdout..."
+    let stdout : String <- IO.ofExcept stdout.get
+    -- dbg_trace "8) read stdout."
+    -- let stdout : String := "STDOUT"
+    dbg_trace ("9)stdout:\n" ++ stdout)
+    return stdout
+
+
+-- parse the response, given the response as a string
+def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List EggExplanation) := do
+    let outJson : Json <- match Json.parse responseString with
+      | Except.error e => throwTacticEx `rawEgg goal e
+      | Except.ok j => pure j
+    dbg_trace ("10)stdout as json:\n" ++ (toString outJson))
+    let responseType := (outJson.getObjValD "response").getStr!
+    dbg_trace ("11)stdout response: |" ++ responseType ++ "|")
+    if responseType == "error"
+    then throwTacticEx `rawEgg goal (toString outJson)
+    else
+      dbg_trace "12) Creating explanation..."
+      -- This whole thing is in an Except beacause everything in Json
+      -- is written relative to Except, and not a general MonadError :(
+      let explanationE : Except String (List EggExplanation) := do
+         -- extract explanation field from response
+         let expl <- (outJson.getObjVal? "explanation")
+         -- cast field to array
+         let expl <- Json.getArr? expl
+         -- map over each element into an explanation
+         let expl <- expl.mapM parseExplanation
+         return expl.toList
+      let explanation <- match explanationE with
+        | Except.error e => throwTacticEx `rawEgg goal (e)
+        | Except.ok v => pure v
+      dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
+      return (explanation)
+
+-- High level wrapped aroung runEggRequestRaw that is well-typed, and returns the 
+-- list of explanations
+def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List EggExplanation) :=
+  runEggRequestRaw request.toJson >>= parseEggResponse goal
+
+
+
+elab "rawEgg" "[" rewrites:ident,* "]" : tactic => withMainContext do
+  let goalMVar <- getMainGoal
   let target <- getMainTarget
-  -- let (target_newMVars, target_binderInfos, target_eq_type) ← forallMetaTelescopeReducing target
-  --  Use the helpers to match because it puts stuff in WHNF
-  match (<- matchEq? target) with
-  | none => do
-    dbg_trace f!"target is not an equality: |{target}|"
-    throwError "target {target} is not an equality"
-  | some (equalityTermType, equalityLhs, equalityRhs) =>
-    let maingoal <- getMainGoal
-    -- | elaborate the given hypotheses as equalities.
-    -- These are the rewrites we will perform rewrites with.
-    -- For arrows, we instantiate them as we can with variables from the context.
-    let initState := { ix := 0, name2expr := [] : EggState}
-    let (egg_rewrites , state)  <- rewrites.getElems.foldlM (init := ([], initState)) 
-        (fun xs_and_state stx => do 
-          let xs := xs_and_state.fst 
-          let state := xs_and_state.snd 
-          let (xs', state) <- (addEqualities (bound := []) equalityTermType xs stx state)
-          return (xs', state))
-    let explanations : List EggExplanation <- (liftMetaMAtMain fun mvarId => do
-      -- let (h, mvarId) <- intro1P mvarId
-      -- let goals <- f mvarId (mkApp (mkConst ``Or.elim) (mkFVar h))
-      let lctx <- getLCtx
-      let mctx <- getMCtx
-      let hypsOfEqualityTermType <- lctx.foldlM (init := []) (fun accum decl =>  do
-          if decl.type == equalityTermType
-          then return (decl.userName, decl.type) :: accum
-          else return accum)
+  let (goalType, goalLhs, goalRhs) ← match (← matchEq? target) with
+      | .none => throwError "Egg: target not equality: {target}"
+      | .some eq => pure eq
+  let rewrites ← (addAllLocalContextEqualities  (← getMainGoal)).getRewrites
+  let eggRequest := { 
+      targetLhs := (← exprToString goalLhs),
+      targetRhs := (← exprToString goalRhs),
+      rewrites := rewrites
+      : EggRequest
+  }
+  let explanations ← runEggRequest goalMVar eggRequest
+  for e in explanations do {
+    let lctx <- getLCtx
+    dbg_trace (f!"14) aplying rewrite explanation {e}")
+    let ix : Int ← match parseNat e.rule with
+      | some ix => pure ix
+      | none => throwTacticEx `rawEgg goalMVar (f!"unknown local declaration {e.rule} in rewrite {e}")
+    let exprEggRw := rewrites.get! ix
+    let explRwExpr ← if e.direction == Backward then mkEqSymm exprEggRw.rw else pure exprEggRw.rw
+    dbg_trace (f!"15) aplying rewrite expression {explRwExpr}")
+    let rewrite_result <- rewrite goalMVar target explRwExpr
+    dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
+    let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
+    replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
+  }
+  return ()
+      
+ /-
+  let (egg_rewrites , state)  <- rewrites.getElems.foldlM (init := ([], initState)) 
+      (fun xs_and_state stx => do 
+        let xs := xs_and_state.fst 
+        let state := xs_and_state.snd 
+        let (xs', state) <- (addAllLocalContextEqualities (bound := []) equalityTermType xs stx state)
+        return (xs', state))
+  
+  let explanations : List EggExplanation <- (liftMetaMAtMain fun mvarId => do
+    let lctx <- getLCtx
+    let mctx <- getMCtx
+    let hypsOfEqualityTermType <- lctx.foldlM (init := []) (fun accum decl =>  do
+        if decl.type == equalityTermType
+        then return (decl.userName, decl.type) :: accum
+        else return accum)
 
-      let out := "\n====\n"
-      let lhs_str : Format <- exprToString equalityLhs (bound := [])
-      let rhs_str : Format <- exprToString equalityRhs (bound := [])
-      let out := out ++ f!"-eq.t: {equalityTermType}"
-      let out := out ++ f!"-eq.lhs: {equalityLhs} / {lhs_str}"
-      let out := out ++ f!"-eq.rhs: {equalityRhs} / {rhs_str}\n"
-      let out := out ++ f!"-hypothesis of type [eq.t]: {hypsOfEqualityTermType}\n"
-      -- let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
-      let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
-      -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
-      -- let out := out ++ m!"-mainGoal: {maingoal}\n"
-      -- let out := out ++ m!"-goals: {goals}\n"
-      -- let out := out ++ m!"-target: {target}\n"
-      let out := out ++ "\n====\n"
-      -- throwTacticEx `rawEgg mvarId out
-      dbg_trace out
-      -- | forge a request.
-      let req : EggRequest := {
-        target_lhs := toString (lhs_str)
-        , target_rhs := toString (rhs_str)
-        , rewrites := egg_rewrites}
-      -- | Invoke accursed magic to send the request.
-      let req_json : String := req.toJson
-      -- | Steal code from |IO.Process.run|
-      dbg_trace "2) sending request:---\n {egg_server_path}\n{req_json}\n---"
-      let egg_server_process <- IO.Process.spawn
-        { cmd := egg_server_path,
-          -- stdin := IO.Process.Stdio.piped,
-          stdout := IO.Process.Stdio.piped,
-          stdin := IO.Process.Stdio.piped,
-          -- stdout := IO.Process.Stdio.null,
-          stderr := IO.Process.Stdio.null
-        }
-      FS.writeFile s!"/tmp/egg.json" req_json
-      dbg_trace "3) Spanwed egg server process. Writing stdin..."
-      let (stdin, egg_server_process) ← egg_server_process.takeStdin
-      stdin.putStr req_json
-      dbg_trace "5) Wrote stdin. Setting up stdout..."
-      let stdout ← IO.asTask egg_server_process.stdout.readToEnd Task.Priority.dedicated
-      dbg_trace "6) Setup stdout. Waiting for exitCode..."
-      let exitCode : UInt32 <- egg_server_process.wait
-      dbg_trace "7) got exitCode ({exitCode}). Waiting for stdout..."
-      let stdout : String <- IO.ofExcept stdout.get
-      -- dbg_trace "8) read stdout."
-      -- let stdout : String := "STDOUT"
-      dbg_trace ("9)stdout:\n" ++ stdout)
-      let out_json : Json <- match Json.parse stdout with
-        | Except.error e => throwTacticEx `rawEgg mvarId e
-        | Except.ok j => pure j
-      dbg_trace ("10)stdout as json:\n" ++ (toString out_json))
-      let response_type := (out_json.getObjValD "response").getStr!
-      dbg_trace ("11)stdout response: |" ++ response_type ++ "|")
-      if response_type == "error"
-      then
-        throwTacticEx `rawEgg mvarId (toString out_json)
-      else
-        dbg_trace "12) Creating explanation..."
-        let explanationE : Except String (List EggExplanation) := do
-           -- extract explanation field from response
-           let expl <- (out_json.getObjVal? "explanation")
-           -- cast field to array
-           let expl <- Json.getArr? expl
-           -- map over each element into an explanation
-           let expl <- expl.mapM parseExplanation
-           return expl.toList
-        let explanation <- match explanationE with
-          | Except.error e => throwTacticEx `rawEgg mvarId (e)
-          | Except.ok v => pure v
-        dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
-        return (explanation))
+    let out := "\n====\n"
+    let lhs_str : Format <- exprToString equalityLhs
+    let rhs_str : Format <- exprToString equalityRhs
+    let out := out ++ f!"-eq.t: {equalityTermType}"
+    let out := out ++ f!"-eq.lhs: {equalityLhs} / {lhs_str}"
+    let out := out ++ f!"-eq.rhs: {equalityRhs} / {rhs_str}\n"
+    let out := out ++ f!"-hypothesis of type [eq.t]: {hypsOfEqualityTermType}\n"
+    -- let out := out ++ f!"-hypotheses of [eq.t = eq.t]: {hypsOfEquality}\n"
+    let out := out ++ f!"-hypotheses given of type [eq.t = eq.t]: {egg_rewrites}\n"
+    -- let out := out ++ m!"-argumentStx: {argumentStx}\n"
+    -- let out := out ++ m!"-mainGoal: {maingoal}\n"
+    -- let out := out ++ m!"-goals: {goals}\n"
+    -- let out := out ++ m!"-target: {target}\n"
+    let out := out ++ "\n====\n"
+    -- throwTacticEx `rawEgg mvarId out
+    dbg_trace out
+    -- | forge a request.
+    let req : EggRequest := {
+      targetLhs := toString (lhs_str)
+      , targetRhs := toString (rhs_str)
+      , rewrites := egg_rewrites}
+    -- | Invoke accursed magic to send the request.
+    let req_json : String := req.toJson
+    -- | Steal code from |IO.Process.run|
+    dbg_trace "2) sending request:---\n {egg_server_path}\n{req_json}\n---"
+    let eggProcess <- IO.Process.spawn
+      { cmd := egg_server_path,
+        -- stdin := IO.Process.Stdio.piped,
+        stdout := IO.Process.Stdio.piped,
+        stdin := IO.Process.Stdio.piped,
+        -- stdout := IO.Process.Stdio.null,
+        stderr := IO.Process.Stdio.null
+      }
+    FS.writeFile s!"/tmp/egg.json" req_json
+    dbg_trace "3) Spanwed egg server process. Writing stdin..."
+    let (stdin, eggProcess) ← egg_server_process.takeStdin
+    stdin.putStr req_json
+    dbg_trace "5) Wrote stdin. Setting up stdout..."
+    let stdout ← IO.asTask eggProcess.stdout.readToEnd Task.Priority.dedicated
+    dbg_trace "6) Setup stdout. Waiting for exitCode..."
+    let exitCode : UInt32 <- eggProcess.wait
+    dbg_trace "7) got exitCode ({exitCode}). Waiting for stdout..."
+    let stdout : String <- IO.ofExcept stdout.get
+    -- dbg_trace "8) read stdout."
+    -- let stdout : String := "STDOUT"
+    dbg_trace ("9)stdout:\n" ++ stdout)
+    let outJson : Json <- match Json.parse stdout with
+      | Except.error e => throwTacticEx `rawEgg mvarId e
+      | Except.ok j => pure j
+    dbg_trace ("10)stdout as json:\n" ++ (toString outJson))
+    let responseType := (outJson.getObjValD "response").getStr!
+    dbg_trace ("11)stdout response: |" ++ responseType ++ "|")
+    if responseType == "error"
+    then
+      throwTacticEx `rawEgg mvarId (toString outJson)
+    else
+      dbg_trace "12) Creating explanation..."
+      let explanationE : Except String (List EggExplanation) := do
+         -- extract explanation field from response
+         let expl <- (outJson.getObjVal? "explanation")
+         -- cast field to array
+         let expl <- Json.getArr? expl
+         -- map over each element into an explanation
+         let expl <- expl.mapM parseExplanation
+         return expl.toList
+      let explanation <- match explanationE with
+        | Except.error e => throwTacticEx `rawEgg mvarId (e)
+        | Except.ok v => pure v
+      dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
+      return (explanation))
 
-    for e in explanations do {
-      let lctx <- getLCtx
-      dbg_trace (f!"14) aplying rewrite {e}")
-        let name : String := e.rule
-        let ldecl_expr <- match (parseInt 100 name) >>= (state.findExpr) with
-        | some ix => pure ix 
-        | none => do 
-           throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
-      let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
-      let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
-      dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
-      let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
-      replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
-    }
-    -- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
-    Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
-    return ()
+  for e in explanations do {
+    let lctx <- getLCtx
+    dbg_trace (f!"14) aplying rewrite explanation {e}")
+      let name : String := e.rule
+      let ldecl_expr <- match (parseNat 100 name) >>= (state.findExpr) with
+      | some e => pure e
+      | none => do 
+         throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+    let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
+    dbg_trace (f!"15) aplying rewrite expression {ldecl_expr}")
+    let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
+    dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
+    let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
+    replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
+  }
+  -- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
+  Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
+  return ()
+-/
 
 -- TODO: Figure out how to extract hypotheses from goal.
 -- | this problem is egg-complete.
@@ -497,6 +571,9 @@ theorem inv_mul_cancel_left (G: Type)
   (invLeft: forall (a: G), mul (inv a) a = one)
   (mulOne: forall (a: G), a = mul a one)
   (invRightX: one = mul x (inv x)): (inv (inv x) = x) := by {
-  rawEgg [assocMul, invLeft, mulOne, invRightX]
+  
 }
+--   rawEgg [assocMul, invLeft, mulOne, invRightX]
+-- }
+
 #print inv_mul_cancel_left

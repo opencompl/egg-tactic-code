@@ -66,6 +66,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "symbolic_expressions",
 ]
 
 [[package]]

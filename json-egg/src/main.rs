@@ -1,8 +1,10 @@
 // Code stolen from:
 // https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
+use std::rc::Rc;
 // use std::f32::consts::E;
 use std::{io};
+use symbolic_expressions::Sexp;
 // use std::{sync::mpsc::Receiver};
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
@@ -89,17 +91,16 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
-fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> {
+fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<(Vec<String>, Sexp)> {
     match (t.forward_rule, t.backward_rule){
         (Some(rule), _) => {
-            Some(vec!["fwd".to_string(), rule.as_str().to_string()])
+            Some((vec!["fwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp()))
         },
-        (_, Some(rule)) => Some(vec!["bwd".to_string(), rule.as_str().to_string()]),
+        (_, Some(rule)) => Some((vec!["bwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp())),
         (None, None) => {
             for c in &t.children {
                 match extract_rule_from_flat_term(&c) {
                     Some(mut rule) => {
-                        rule.push(t.node.to_string());
                         return Some(rule)
                     },
                     None => ()
@@ -110,6 +111,67 @@ fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<Vec<String>> 
     }
 
 }
+
+/*
+pub fn flatten_explanation(&self) -> FlatExplanation<L> {
+    let mut proof = vec![];
+    let mut child_proofs = vec![];
+    let mut representative_terms = vec![];
+    for child_explanation in &self.child_proofs {
+        let flat_proof = TreeTerm::flatten_proof(child_explanation);
+        representative_terms.push(flat_proof[0].remove_rewrites());
+        child_proofs.push(flat_proof);
+    }
+
+    proof.push(FlatTerm::new(
+        self.node.clone(),
+        representative_terms.clone(),
+    ));
+
+    for (i, child_proof) in child_proofs.iter().enumerate() {
+        // replace first one to preserve the rule annotation
+        proof.last_mut().unwrap().children[i] = child_proof[0].clone();
+
+        for child in child_proof.iter().skip(1) {
+            let mut children = vec![];
+            for (j, rep_term) in representative_terms.iter().enumerate() {
+                if j == i {
+                    children.push(child.clone());
+                } else {
+                    children.push(rep_term.clone());
+                }
+            }
+
+            proof.push(FlatTerm::new(self.node.clone(), children));
+        }
+        representative_terms[i] = child_proof.last().unwrap().remove_rewrites();
+    }
+
+    proof[0].backward_rule = self.backward_rule;
+    proof[0].forward_rule = self.forward_rule;
+
+    proof
+}
+
+fn flatten_proof(proof: &[Rc<TreeTerm<SymbolLang>>]) -> FlatExplanation<SymbolLang> {
+    let mut flat_proof: FlatExplanation<SymbolLang> = vec![];
+    for tree in proof {
+        let mut explanation = tree.flatten_explanation();
+
+        if !flat_proof.is_empty()
+            && !explanation[0].has_rewrite_forward()
+            && !explanation[0].has_rewrite_backward()
+        {
+            let last = flat_proof.pop().unwrap();
+            // explanation[0].combine_rewrites(&last);
+        }
+
+        flat_proof.extend(explanation);
+    }
+
+    flat_proof
+}
+*/
 
 fn handle_request(req: Request) -> Response {
     match req {
@@ -151,7 +213,7 @@ fn handle_request(req: Request) -> Response {
                     let rule = extract_rule_from_flat_term(e);
                     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
                     match rule  {
-                        Some(r) => {
+                        Some((r, _sexp)) => {
                             rules.push(r);
                         }
                         None => ()
