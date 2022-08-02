@@ -198,11 +198,25 @@ def expr_get_forall_bound_vars: Expr -> List Name
 | Expr.forallE name ty body _ => name :: expr_get_forall_bound_vars body 
 | _ => []
 
+
 def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit := 
   if !shouldSucceed? then throwError err else pure ()
 
 def Array.isSubsetOf [BEq α] (self: Array α) (other: Array α): Bool :=
   self.all (fun x => other.contains x)
+  
+
+-- verify that the expressoin is of the form 
+-- ∀ x₁, ∀ x₂, ∀ x₃, ... , f(x₁, x₂, ...) = g(x₁, x₂, ...)
+-- This is well founded since we reduce on the body of the forall,
+-- but lean cannot see this, and hence neds a `partial`.
+partial def Lean.Expr.universallyQuantifiedEq? (e: Expr): Bool := 
+  -- match e with 
+  -- | .forallE (body := body) .. => 
+  if e.isEq then true 
+  else if e.isForall
+  then e.getForallBody.universallyQuantifiedEq?
+  else false
 
 
 /-
@@ -231,7 +245,7 @@ def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
 Create an equality with MVars
 -/
 def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do 
-  tacticGuard ty.isForall "**expected ∀ at mvar equality"
+  tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   trace[egg] "**adding forallMVarEquality {rw} : {ty}"
   let (ms, binders, tyNoForall) ← forallMetaTelescope ty
   addBareEquality rw tyNoForall
@@ -254,7 +268,7 @@ partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): Egg
 
 -- See `addForallExplodedEquality_`
 def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
-  tacticGuard ty.isForall "**expected ∀ at exploded equality"
+  tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   trace[egg] "**adding forallExplodedEquality {rw} : {ty}"
   addForallExplodedEquality_ goal rw ty
 
