@@ -1,3 +1,4 @@
+import EggTactic.Sexp
 import Lean.Meta.Tactic.Rewrite
 import Lean.Meta.Tactic.Replace
 import Lean.Elab.Tactic.Basic
@@ -35,22 +36,33 @@ open EggRewriteDirection
 structure EggExplanation where
   direction: EggRewriteDirection -- direction of the rewrite
   rule: String -- name of the rewrite rule
+  args: Array Expr
 
 instance : ToString EggExplanation where
   toString expl :=
     let dir := if expl.direction == Forward then "fwd" else "bwd"
     toString f!"[{dir}, {expl.rule}]"
 
+  
+def eggParseExpr (s: String): Except SexpError Expr :=
+  match parseSexp s with 
+  | .error err => .error err
+  | .ok v => 
+
 -- | parse a fragment of an explanation into an EggRewrite
 def parseExplanation (j: Json) : Except String EggExplanation := do
   let l <- j.getArr?
-  let ty <- l[0].getStr?
+  let ty <- l[0]!.getStr?
   let d <- match ty with
   | "fwd" => pure Forward
   | "bwd" => pure Backward
   | other => throw (toString f!"unknown direction {other} in |{j}")
-  let r <- l[1].getStr?
-  return { direction := d, rule := r}
+  let r <- l[1]!.getStr?
+  let mut args : Array Expr := #[]
+  for arg in l[2:] do 
+     args := args.push (←  eggParseExpr arg)
+     pure ()
+  return { direction := d, rule := r, args := args : EggExplanation }
 
 -- | Actually do the IO. This incurs an `unsafe`.
 unsafe def unsafePerformIO [Inhabited a] (io: IO a): a :=
@@ -114,38 +126,30 @@ match n with
 def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n 
 
 
-  /-
-  | bvar    : Nat → Data → Expr                       -- bound variables
-  | fvar    : FVarId → Data → Expr                    -- free variables
-  | mvar    : MVarId → Data → Expr                    -- meta variables
-  | sort    : Level → Data → Expr                     -- Sort
-  | const   : Name → List Level → Data → Expr         -- constants
-  | app     : Expr → Expr → Data → Expr               -- application
-  | lam     : Name → Expr → Expr → Data → Expr        -- lambda abstraction
-  | forallE : Name → Expr → Expr → Data → Expr        -- (dependent) arrow
-  | letE    : Name → Expr → Expr → Expr → Data → Expr -- let expressions
-  | lit     : Literal → Data → Expr                   -- literals
-  | mdata   : MData → Expr → Data → Expr              -- metadata
-  | proj    : Name → Nat → Expr → Data → Expr         -- projection
--/
-
 /-
 convert this expression into a string, along with the names of the
 bound variables.
 -/
 def exprToString (e: Expr): MetaM String :=   
 match e with 
-  | Expr.const  name levels data => pure (name.toString)
-  | Expr.bvar ix data => throwError s!"expected no bound variables, we use locally nameless!"
-  | Expr.fvar id data => pure (id.name.toString)
-  | Expr.mvar id data => pure ("?" ++ (id.name.toString))
-  | Expr.lit (.natVal n) data => pure (toString n)
-  | Expr.app     l r data => do 
+  | Expr.const name levels => pure (name.toString)
+  | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!"
+  | Expr.fvar id => pure (id.name.toString)
+  | Expr.mvar id => pure ("?" ++ (id.name.toString))
+  | Expr.lit (.natVal n)=> pure (toString n)
+  | Expr.app  l r => do 
      let lstr <- exprToString l
      let rstr <- exprToString r
      pure $ "(ap " ++ lstr ++ " " ++ rstr ++ ")"
   | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
 
+
+def Lean.Expr.getMVars (e: Expr) (arr: Array MVarId := #[]): Array MVarId := 
+match e with 
+  | Expr.mvar id => arr.push id
+  | Expr.app l r => 
+     r.getMVars (l.getMVars arr)
+  | _ => arr
 
 structure EggState where
   ix: Nat := 0
@@ -188,7 +192,7 @@ partial def addEggRewrite (rw: Expr) (lhs: String) (rhs: String): EggM Unit := d
   modify (fun state => { state with ix := i + 1, name2expr := (i, rw) :: state.name2expr, rewrites := egg_rewrite :: state.rewrites })
 
 def expr_get_forall_bound_vars: Expr -> List Name 
-| Expr.forallE name ty body data => name :: expr_get_forall_bound_vars body 
+| Expr.forallE name ty body _ => name :: expr_get_forall_bound_vars body 
 | _ => []
 
 -- | disgusting. Please fix to a real parser later @andres
@@ -201,17 +205,25 @@ partial def parseNat (s: String) (counter: Nat := 100) : Option Nat :=
 def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit := 
   if !shouldSucceed? then throwError err else pure ()
 
+def Array.isSubsetOf [BEq α] (self: Array α) (other: Array α): Bool :=
+  self.all (fun x => other.contains x)
+
+
 /-
 Create a regular equality of the form lhs = rhs
 -/
 def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
   dbg_trace "**adding bareEquality {rw} : {ty}"
+  -- Check if the lhs has all the mvars of the rhs
   let (lhs, rhs)  ←
       match (← matchEq? ty) with
       | some (_, lhs, rhs) => 
           pure (lhs, rhs) 
       | none => throwError f!"**expected type to be equality: {ty}"
-  addEggRewrite rw (← exprToString lhs) (← exprToString rhs)
+  if rhs.getMVars.isSubsetOf lhs.getMVars then
+    addEggRewrite rw (← exprToString lhs) (← exprToString rhs)
+  else 
+    dbg_trace "**have equality where RHS has more vars than LHS: {ty}"
 
 /-
 Create an equality with MVars
@@ -228,9 +240,9 @@ def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
 -- infer this
 partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do 
   if let Expr.forallE x xty body _ := ty then do {
-  dbg_trace "**forall is (FA [{x} : {xty}] {body})"
+  dbg_trace "**forall is : (FA [{x} : {xty}] {body})"
    withExprsOfType goal xty $ λ xval => do 
-      dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
+      -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
       -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
       addForallExplodedEquality_ goal rw (← instantiateForall ty #[xval])
   } else {
@@ -263,6 +275,7 @@ def addAllLocalContextEqualities (goal: MVarId): EggM Unit :=
 
 -- Do the dirty work of sending a string, and reading the string out from stdout
 def runEggRequestRaw (requestJson: String): MetaM String := do
+    dbg_trace "sending request:\n{requestJson}"
     let eggProcess <- IO.Process.spawn
       { cmd := egg_server_path,
         -- stdin := IO.Process.Stdio.piped,
@@ -313,7 +326,7 @@ def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List EggExp
         | Except.error e => throwTacticEx `rawEgg goal (e)
         | Except.ok v => pure v
       dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
-      return (explanation)
+      return explanation
 
 -- High level wrapped aroung runEggRequestRaw that is well-typed, and returns the 
 -- list of explanations
@@ -329,7 +342,6 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic => withMainContext do
       | .none => throwError "Egg: target not equality: {target}"
       | .some eq => pure eq
   let rewrites ← (addAllLocalContextEqualities  (← getMainGoal)).getRewrites
-  dbg_trace (f!"13) have rewrites {rewrites}")
   let eggRequest := { 
       targetLhs := (← exprToString goalLhs),
       targetRhs := (← exprToString goalRhs),
@@ -339,17 +351,19 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic => withMainContext do
   let explanations ← runEggRequest goalMVar eggRequest
   for e in explanations do {
     let lctx <- getLCtx
-    dbg_trace (f!"14) aplying rewrite explanation {e}")
+    dbg_trace (s!"14) aplying rewrite explanation {e}")
     let ix : Int ← match parseNat e.rule with
       | some ix => pure ix
       | none => throwTacticEx `rawEgg goalMVar (f!"unknown local declaration {e.rule} in rewrite {e}")
-    let exprEggRw := rewrites.get! ix
-    let explRwExpr ← if e.direction == Backward then mkEqSymm exprEggRw.rw else pure exprEggRw.rw
-    dbg_trace (f!"15) aplying rewrite expression {explRwExpr}")
-    let rewrite_result <- rewrite goalMVar target explRwExpr
-    dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
-    let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
-    replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
+    let eggRewrite := rewrites.get! ix
+    let rw ← if e.direction == Backward then mkEqSymm eggRewrite.rw else pure eggRewrite.rw
+    dbg_trace (s!"**applying rewrite expression: {eggRewrite}")
+    dbg_trace (s!"**applying rewrite expression: {rw}")
+    let rewriteResult <- rewrite goalMVar target rw
+    dbg_trace (s!"**rewritten to: {rewriteResult.eNew}")
+    let goal' ← replaceTargetEq goalMVar rewriteResult.eNew rewriteResult.eqProof
+    -- dbg_trace (s!"** new goal: {goal'}")
+    replaceMainGoal (goal' :: rewriteResult.mvarIds) -- replace main goal with new goal + subgoals
   }
   return ()
       
@@ -437,36 +451,40 @@ elab "rawEgg" "[" rewrites:ident,* "]" : tactic => withMainContext do
       let explanation <- match explanationE with
         | Except.error e => throwTacticEx `rawEgg mvarId (e)
         | Except.ok v => pure v
-      dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
-      return (explanation))
+    dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
+    return (explanation))
 
-  for e in explanations do {
-    let lctx <- getLCtx
-    dbg_trace (f!"14) aplying rewrite explanation {e}")
-      let name : String := e.rule
-      let ldecl_expr <- match (parseNat 100 name) >>= (state.findExpr) with
-      | some e => pure e
-      | none => do 
-         throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
-    let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
-    dbg_trace (f!"15) aplying rewrite expression {ldecl_expr}")
-    let rewrite_result <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
-    dbg_trace (f!"rewritten to: {rewrite_result.eNew}")
-    let mvarId' ← replaceTargetEq (← getMainGoal) rewrite_result.eNew rewrite_result.eqProof
-    replaceMainGoal (mvarId' :: rewrite_result.mvarIds)
-  }
-  -- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
-  Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
-  return ()
+for e in explanations do {
+  let lctx <- getLCtx
+  dbg_trace (f!"14) aplying rewrite explanation {e}")
+    let name : String := e.rule
+    let ldecl_expr <- match (parseNat 100 name) >>= (state.findExpr) with
+    | some e => pure e
+    | none => do 
+       throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+  let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
+  dbg_trace (f!"15) aplying rewrite expression {ldecl_expr}")
+  let rewriteResult <- rewrite (<- getMainGoal) (<- getMainTarget) ldecl_expr
+  dbg_trace (f!"rewritten to: {rewriteResult.eNew}")
+  let mvarId' ← replaceTargetEq (← getMainGoal) rewriteResult.eNew rewriteResult.eqProof
+  replaceMainGoal (mvarId' :: rewriteResult.mvarIds)
+}
+-- Lean.Elab.Tactic.evalTactic (← `(tactic| try done))
+Lean.Elab.Tactic.evalTactic (← `(tactic| try rfl))
+return ()
 -/
 
 -- TODO: Figure out how to extract hypotheses from goal.
 -- | this problem is egg-complete.
-def not_rewrite : Int := 42
-def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
-def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
+-- def not_rewrite : Int := 42
+-- def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
+-- def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
 
 
+theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
+  intros;
+  rawEgg []
+}
 
 
 
