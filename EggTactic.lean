@@ -159,6 +159,8 @@ structure EggState where
 
 abbrev EggM (α: Type) := StateT EggState TermElabM α
 
+-- Lens s t a b = forall f. Profunctor f => (p a b) -> (p s t)
+#check EggState.ix
 def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do 
   pure (← egg.run default).snd.rewrites
 
