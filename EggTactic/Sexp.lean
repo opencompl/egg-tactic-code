@@ -41,6 +41,10 @@ inductive SexpError
 | unmatchedCloseParen (ix: String.Iterator): SexpError
 deriving BEq, Repr
 
+instance : ToString SexpError where toString := λ err => match err with
+  | .unmatchedOpenParen ix => s!"Unmatched open parenthesis at {ix}"
+  | .unmatchedCloseParen ix => s!"Unmatched close parenthesis at {ix}"
+
 abbrev SexpM := EStateM SexpError SexpState 
 
 
