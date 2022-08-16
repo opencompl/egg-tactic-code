@@ -47,10 +47,16 @@ instance : ToString Eggxplanation where
     toString f!"[{dir}, {expl.rule}]"
 
 
-def eggParseExpr (s: String): Except String Expr :=
-  match parseSexp s with
-  | .error err => .error $ toString err
-  | .ok v => sorry -- convert to expr
+-- Parse the output egg sexpr as a Lean expr
+def parseEggSexprToExpr (s: Sexp): Except String Expr := 
+ match s with 
+ | Sexp.atom x => 
+   if x.get 0 == '?' 
+   then sorry 
+   else sorry
+ | Sexp.list _ xs => sorry
+
+
 
 -- | parse a fragment of an explanation into an EggRewrite
 def parseExplanation (j: Json) : Except String Eggxplanation := do
@@ -63,7 +69,9 @@ def parseExplanation (j: Json) : Except String Eggxplanation := do
   let r <- l[1]!.getStr?
   let mut args : Array Expr := #[]
   for arg in l[2:] do
-     args := args.push (← eggParseExpr (← arg.getStr?))
+     let sexp ← (parseSexp (← arg.getStr?)).mapError toString
+     let sexp := sexp[0]!
+     args := args.push (← parseEggSexprToExpr sexp)
   return { direction := d, rule := r, args := args
           : Eggxplanation }
 
@@ -272,16 +280,15 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
   trace[egg] "**adding forallExplodedEquality {rw} : {ty}"
   addForallExplodedEquality_ goal rw ty
 
--- Add an expression into the EggM context.
--- TODO @bollu: refactor rw, ty into a struct with addiniotal proof `rw : ty`
--- + add Egg somewhere to name
-def addExpr (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
-  -- We should check that in the end we get an Eq in this case
-   if ty.isForall then do
-     addForallExplodedEquality goal rw ty
-     addForallMVarEquality rw ty
-   else if ty.isEq then do
-     addBareEquality rw ty
+-- Add an expression into the EggM context, if it is indeed a rewrite
+def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
+  if ty.universallyQuantifiedEq? then
+    if ty.isForall then do
+        addForallExplodedEquality goal rw ty
+        addForallMVarEquality rw ty
+    else if ty.isEq then do
+        addBareEquality rw ty
+
 
 -- Add all equalities from the local context
 def addAllLocalContextEqualities (goal: MVarId): EggM Unit :=
@@ -289,7 +296,7 @@ def addAllLocalContextEqualities (goal: MVarId): EggM Unit :=
     for decl in (← getLCtx) do
       trace[egg] ("**processing local declaration {decl.userName}" ++
       ":= {decl.toExpr} : {← inferType decl.toExpr}")
-      addExpr goal decl.toExpr (← inferType decl.toExpr)
+      eggAddExprAsRewrite goal decl.toExpr (← inferType decl.toExpr)
 
 
 -- Do the dirty work of sending a string, and reading the string out from stdout
