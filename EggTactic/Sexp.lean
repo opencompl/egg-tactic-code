@@ -6,6 +6,9 @@ inductive Sexp
 | list: Substring → List Sexp → Sexp
 deriving BEq, Inhabited, Repr
 
+def Sexp.toString : Sexp → String := λ _ => "" -- TODO: implement
+instance : ToString Sexp := ⟨Sexp.toString⟩
+
 inductive SexpTok
 | sexp: Sexp →  SexpTok
 | opening: String.Pos → SexpTok

@@ -115,7 +115,7 @@ theorem inv_mul_cancel_left (G: Type)
   (mulOne: forall (a: G), a = mul a one)
   (invRight: forall (a: G), one = mul a (inv a))
   : (inv (inv x) = x) := by {
-  rawEgg [assocMul, invLeft, mulOne, invRight]
+  rawEgg [assocMul, invLeft, mulOne, invRight
 
 }
 #print inv_mul_cancel_left

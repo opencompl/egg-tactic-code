@@ -5,7 +5,7 @@ package «egg-tactic» {
   supportInterpreter := true,
   libRoots := #[`EggTactic]
   libName := "EggTactic"
-  binRoot := `EggTactic
+  binRoot := `Main
 
   -- add configuration options here
 }
