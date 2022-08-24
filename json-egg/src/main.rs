@@ -1,7 +1,10 @@
 // Code stolen from:
 // https://github.com/mwillsey/egg-herbie-new/blob/8615590ff4ca07703c4b602f7d1b542e6465cfa6/src/main.rs
 use egg::{rewrite as rw, *};
+//use std::arch::x86_64::m128Ext;
+use std::borrow::Borrow;
 use std::rc::Rc;
+use std::collections::HashMap;
 // use std::f32::consts::E;
 use std::{io};
 use symbolic_expressions::Sexp;
@@ -16,7 +19,10 @@ pub type Constant = num_rational::BigRational;
 pub type RecExpr = egg::RecExpr<SymbolLang>;
 pub type EGraph = egg::EGraph<SymbolLang, ()>;
 pub type Rewrite = egg::Rewrite<SymbolLang, ()>;
-
+pub type FlatTerm = egg::FlatTerm<SymbolLang>;
+pub type PatternAst = egg::PatternAst<SymbolLang>;
+pub type FlatExplanation = egg::FlatExplanation<SymbolLang>;
+pub type ENodeOrVar = egg::ENodeOrVar<SymbolLang>;
 pub type IterData = ();
 pub type Runner = egg::Runner<SymbolLang, (), IterData>;
 pub type Iteration = egg::Iteration<IterData>;
@@ -55,6 +61,15 @@ enum Request {
     }
 }
 
+#[derive(Serialize,Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct LeanRewriteInfo {
+    rewrite: String, // name of the rewrite
+    args: HashMap<String, String>, // metavariable values.
+    direction: String, // direction of the rewrite
+
+}
+
 
 #[derive(Serialize,Debug)]
 #[serde(rename_all = "kebab-case")]
@@ -63,7 +78,7 @@ enum Response {
     PerformRewrite {
         success: bool,
         // TODO: how does one use Sexp?
-        explanation: Vec<Vec<String>>
+        explanation: Vec<LeanRewriteInfo>
     },
     Error { error: String }
 }
@@ -91,9 +106,51 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
-fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<(Vec<String>, Sexp)> {
+fn flat_term_make_bindings<'a>(
+    ft: &'a FlatTerm,
+    pattern: &[ENodeOrVar],
+    location: usize,
+    bindings: &mut HashMap<Var, &'a FlatTerm>,
+) {
+    match &pattern[location] {
+        ENodeOrVar::Var(var) => {
+            if let Some(existing) = bindings.get(var) {
+                if existing != &ft {
+                    panic!(
+                        "Invalid proof: binding for variable {:?} does not match between {:?} \n and \n {:?}",
+                        var, existing, ft);
+                }
+            } else {
+                bindings.insert(*var, ft);
+            }
+        }
+        ENodeOrVar::ENode(node) => {
+            // The node must match the rewrite or the proof is invalid.
+            assert!(node.matches(&ft.node));
+            let mut counter = 0;
+            node.for_each(|child| {
+                flat_term_make_bindings(&ft.children[counter], pattern, usize::from(child), bindings);
+                counter += 1;
+            });
+        }
+    }
+}
+
+
+// fn flat_term_rewrite<'a>(t: &'a FlatTerm, lhs: &PatternAst, rhs: &PatternAst) -> HashMap<Var, &'a FlatTerm> {
+fn flat_term_binding<'a>(t: &'a FlatTerm, lhs: &PatternAst, rhs: &PatternAst) -> HashMap<Var, &'a FlatTerm> {
+    let lhs_nodes = lhs.as_ref();
+    // let rhs_nodes = rhs.as_ref();
+    let mut bindings = Default::default();
+    flat_term_make_bindings(t, lhs_nodes, lhs_nodes.len() - 1, &mut bindings);
+    // FlatTerm::from_pattern(rhs_nodes, rhs_nodes.len() - 1, &bindings)
+    return bindings.clone();
+}
+
+fn extract_rule_from_flat_term(t: &FlatTerm) -> Option<(Vec<String>, Sexp)> {
     match (t.forward_rule, t.backward_rule){
         (Some(rule), _) => {
+            let node = t.node.clone();
             Some((vec!["fwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp()))
         },
         (_, Some(rule)) => Some((vec!["bwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp())),
@@ -109,69 +166,100 @@ fn extract_rule_from_flat_term(t: &FlatTerm<SymbolLang>) -> Option<(Vec<String>,
             return None
         }
     }
-
 }
 
-/*
-pub fn flatten_explanation(&self) -> FlatExplanation<L> {
-    let mut proof = vec![];
-    let mut child_proofs = vec![];
-    let mut representative_terms = vec![];
-    for child_explanation in &self.child_proofs {
-        let flat_proof = TreeTerm::flatten_proof(child_explanation);
-        representative_terms.push(flat_proof[0].remove_rewrites());
-        child_proofs.push(flat_proof);
-    }
 
-    proof.push(FlatTerm::new(
-        self.node.clone(),
-        representative_terms.clone(),
-    ));
-
-    for (i, child_proof) in child_proofs.iter().enumerate() {
-        // replace first one to preserve the rule annotation
-        proof.last_mut().unwrap().children[i] = child_proof[0].clone();
-
-        for child in child_proof.iter().skip(1) {
-            let mut children = vec![];
-            for (j, rep_term) in representative_terms.iter().enumerate() {
-                if j == i {
-                    children.push(child.clone());
-                } else {
-                    children.push(rep_term.clone());
-                }
+// if the rewrite is just patterns, then it can check it
+fn check_rewrite<'a>(
+    current: &'a FlatTerm,
+    next: &'a FlatTerm,
+    rewrite: &Rewrite,
+    is_forward: bool) -> LeanRewriteInfo {
+    if let Some(lhs) = rewrite.searcher.get_pattern_ast() {
+        if let Some(rhs) = rewrite.applier.get_pattern_ast() {
+            let rewritten = current.rewrite(lhs, rhs);
+            if &rewritten != next {
+                panic!("rewrite {:?} failed when rewriting {:?} to {:?}", rewrite, current, next);
             }
-
-            proof.push(FlatTerm::new(self.node.clone(), children));
+            let binding = flat_term_binding(current, lhs, rhs);
+            let mut info = LeanRewriteInfo {
+                rewrite: rewrite.name.to_string(),
+                args: HashMap::new(),
+                direction: if is_forward { String::from("fwd") } else { String::from("bwd") }
+            };
+            for (var, ft) in &binding {
+                info.args.insert(var.to_string(), ft.get_sexp().to_string());
+            }
+            return info;
         }
-        representative_terms[i] = child_proof.last().unwrap().remove_rewrites();
     }
-
-    proof[0].backward_rule = self.backward_rule;
-    proof[0].forward_rule = self.forward_rule;
-
-    proof
+    panic!("should have returned before when rewriting {:?} to {:?} with {:?}", current, next, rewrite);
 }
 
-fn flatten_proof(proof: &[Rc<TreeTerm<SymbolLang>>]) -> FlatExplanation<SymbolLang> {
-    let mut flat_proof: FlatExplanation<SymbolLang> = vec![];
-    for tree in proof {
-        let mut explanation = tree.flatten_explanation();
 
-        if !flat_proof.is_empty()
-            && !explanation[0].has_rewrite_forward()
-            && !explanation[0].has_rewrite_backward()
-        {
-            let last = flat_proof.pop().unwrap();
-            // explanation[0].combine_rewrites(&last);
+
+
+fn check_rewrite_at
+    (current: &FlatTerm,
+    next: &FlatTerm,
+    table: &HashMap<Symbol, &Rewrite>,
+    is_forward: bool,
+    out: &mut Vec<LeanRewriteInfo>) {
+    if is_forward && next.forward_rule.is_some() {
+        let rule_name = next.forward_rule.as_ref().unwrap();
+        if let Some(rule) = table.get(rule_name) {
+            out.push(check_rewrite(current, next, rule, is_forward));
+        } else {
+            // give up when the rule is not provided
         }
+    } else if !is_forward && next.backward_rule.is_some() {
+        let rule_name = next.backward_rule.as_ref().unwrap();
+        if let Some(rule) = table.get(rule_name) {
+            out.push(check_rewrite(next, current, rule, is_forward));
+        } else {
+            // give up when the rule is not provided
 
-        flat_proof.extend(explanation);
+        }
+    } else {
+        for (left, right) in current.children.iter().zip(next.children.iter()) {
+            check_rewrite_at(left, right, table, is_forward, out);
+        }
     }
-
-    flat_proof
 }
-*/
+
+
+fn make_rule_table<'a>(
+    rules: &'a Vec<Rewrite>
+) -> HashMap<egg::Symbol, &'a Rewrite> {
+    let mut table: HashMap<Symbol, &'a Rewrite> = Default::default();
+    for r in rules {
+        table.insert(r.name, &r);
+    }
+    table
+}
+
+pub fn check_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> Vec<LeanRewriteInfo> {
+    let rule_table = make_rule_table(&rules);
+    assert!(!flat_explanation[0].has_rewrite_forward());
+    assert!(!flat_explanation[0].has_rewrite_backward());
+
+    let mut explanations : Vec<LeanRewriteInfo> = Vec::new();
+    for i in 0..flat_explanation.len() - 1 {
+        let current = &flat_explanation[i];
+        let next = &flat_explanation[i + 1];
+
+        let has_forward = next.has_rewrite_forward();
+        let has_backward = next.has_rewrite_backward();
+        assert!(has_forward ^ has_backward);
+
+        if has_forward {
+            check_rewrite_at(current, next, &rule_table, true, &mut explanations);
+        } else {
+            check_rewrite_at(current, next, &rule_table, false, &mut explanations);
+        }
+    }
+    return explanations;
+}
 
 fn handle_request(req: Request) -> Response {
     match req {
@@ -201,25 +289,25 @@ fn handle_request(req: Request) -> Response {
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
                 let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
                     & target_rhs_expr);
-                let flat_explanation : &FlatExplanation<SymbolLang> =
+                let flat_explanation : &FlatExplanation =
                     explanation.make_flat_explanation();
 
                 // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
-                let mut rules : Vec<Vec<String>> = Vec::new();
-
+                // let mut rules : Vec<Vec<String>> = Vec::new();
+                let explanation = check_proof(new_rewrites, flat_explanation);
                 // println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
-                for e in flat_explanation {
-                    let rule = extract_rule_from_flat_term(e);
-                    // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
-                    match rule  {
-                        Some((r, _sexp)) => {
-                            rules.push(r);
-                        }
-                        None => ()
-                    }
-                }
-                Response::PerformRewrite { success: true, explanation: rules }
+                // for e in flat_explanation {
+                //     let rule = extract_rule_from_flat_term(e);
+                //     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
+                //     match rule  {
+                //         Some((r, _sexp)) => {
+                //             rules.push(r);
+                //         }
+                //         None => ()
+                //     }
+                // }
+                Response::PerformRewrite { success: true, explanation: explanation }
             } else {
                 Response::Error {error: format!("no rewrite found! egraph: {:?}", runner.egraph.dump()) }
 
