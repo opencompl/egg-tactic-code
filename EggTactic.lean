@@ -68,8 +68,10 @@ def parseExplanation (j: Json) : Except String Eggxplanation := do
   let r <- l[1]!.getStr?
   let mut args : Array Expr := #[]
   for arg in l[2:] do
-     let sexp ← (parseSexp (← arg.getStr?)).mapError toString
-     let sexp := sexp[0]!
+     let sexp ← (parseSingleSexp (← arg.getStr?)).mapError toString
+     -- (Rewrite=> <name> <expr>)
+     --                   ^^^^^^2
+     let sexp := sexp.toList![2]!
      args := args.push (← parseEggSexprToExpr sexp)
   return { direction := d, rule := r, args := args
           : Eggxplanation }
@@ -125,39 +127,39 @@ def Lean.Json.getArr! (j: Json): Array Json :=
   | Json.arr a => a
   | _ => #[]
 
-def Lean.List.contains [DecidableEq a] (as: List a) (needle: a): Bool := 
+def Lean.List.contains [DecidableEq a] (as: List a) (needle: a): Bool :=
   as.any (. == needle)
- 
-def lean_list_get? (as: List a) (n: Nat): Option a := 
-match n with 
+
+def lean_list_get? (as: List a) (n: Nat): Option a :=
+match n with
 | 0 => match as with | .nil => none | .cons a as => some a
 | n + 1 => match as with | .nil => none |.cons a as => lean_list_get? as n
 
-def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n 
+def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n
 
 
 /-
 convert this expression into a string, along with the names of the
 bound variables.
 -/
-def exprToString (e: Expr): MetaM String :=   
-match e with 
+def exprToString (e: Expr): MetaM String :=
+match e with
   | Expr.const name levels => pure (name.toString)
   | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!"
   | Expr.fvar id => pure (id.name.toString)
   | Expr.mvar id => pure ("?" ++ (id.name.toString))
   | Expr.lit (.natVal n)=> pure (toString n)
-  | Expr.app  l r => do 
+  | Expr.app  l r => do
      let lstr <- exprToString l
      let rstr <- exprToString r
      pure $ "(ap " ++ lstr ++ " " ++ rstr ++ ")"
   | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
 
 
-def Lean.Expr.getMVars (e: Expr) (arr: Array MVarId := #[]): Array MVarId := 
-match e with 
+def Lean.Expr.getMVars (e: Expr) (arr: Array MVarId := #[]): Array MVarId :=
+match e with
   | Expr.mvar id => arr.push id
-  | Expr.app l r => 
+  | Expr.app l r =>
      r.getMVars (l.getMVars arr)
   | _ => arr
 
@@ -169,14 +171,14 @@ structure EggState where
 
 abbrev EggM (α: Type) := StateT EggState TermElabM α
 
-def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do 
+def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do
   pure (← egg.run default).snd.rewrites
 
 -- Find expressions of a given type in the local context
 def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit := do
    withMVarContext g do
     let lctx <- getLCtx
-    for ldecl in lctx do 
+    for ldecl in lctx do
       let ldecl_type <- inferType ldecl.toExpr
       if (← isExprDefEq ldecl_type t) then f ldecl.toExpr
 
@@ -187,11 +189,11 @@ instance : ToString EggState where
     toString f!"[ix:{expl.ix}]"
 
 -- | find an expression with the given index as needle.
-def EggState.findExpr (state: EggState) (needle: Int): Option Expr := 
+def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     let rec go (l: List (Int × Expr)): Option Expr :=
-      match l with 
+      match l with
       | [] => Option.none
-      | ((ix, e)::xs) => if ix == needle then some e else go xs 
+      | ((ix, e)::xs) => if ix == needle then some e else go xs
     go state.name2expr
 
 
@@ -202,26 +204,26 @@ partial def addEggRewrite (rw: Expr) (lhs: String) (rhs: String): EggM Unit := d
   let egg_rewrite := { name := toString i, lhs := lhs, rhs := rhs, rw := rw : EggRewrite }
   modify (fun state => { state with ix := i + 1, name2expr := (i, rw) :: state.name2expr, rewrites := egg_rewrite :: state.rewrites })
 
-def expr_get_forall_bound_vars: Expr -> List Name 
-| Expr.forallE name ty body _ => name :: expr_get_forall_bound_vars body 
+def expr_get_forall_bound_vars: Expr -> List Name
+| Expr.forallE name ty body _ => name :: expr_get_forall_bound_vars body
 | _ => []
 
 
-def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit := 
+def tacticGuard (shouldSucceed?: Bool) (err: MessageData): MetaM Unit :=
   if !shouldSucceed? then throwError err else pure ()
 
 def Array.isSubsetOf [BEq α] (self: Array α) (other: Array α): Bool :=
   self.all (fun x => other.contains x)
-  
 
--- verify that the expressoin is of the form 
+
+-- verify that the expressoin is of the form
 -- ∀ x₁, ∀ x₂, ∀ x₃, ... , f(x₁, x₂, ...) = g(x₁, x₂, ...)
 -- This is well founded since we reduce on the body of the forall,
 -- but lean cannot see this, and hence neds a `partial`.
-partial def Lean.Expr.universallyQuantifiedEq? (e: Expr): Bool := 
-  -- match e with 
-  -- | .forallE (body := body) .. => 
-  if e.isEq then true 
+partial def Lean.Expr.universallyQuantifiedEq? (e: Expr): Bool :=
+  -- match e with
+  -- | .forallE (body := body) .. =>
+  if e.isEq then true
   else if e.isForall
   then e.getForallBody.universallyQuantifiedEq?
   else false
@@ -235,8 +237,8 @@ def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
   -- Check if the lhs has all the mvars of the rhs
   let (lhs, rhs)  ←
       match (← matchEq? ty) with
-      | some (_, lhs, rhs) => 
-          pure (lhs, rhs) 
+      | some (_, lhs, rhs) =>
+          pure (lhs, rhs)
       | none => throwError f!"**expected type to be equality: {ty}"
   -- NOTE: egg can only handle rewrites where the value of metavars
   -- on the RHS is deduced from the LHS. Thus, we check that
@@ -252,7 +254,7 @@ def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
 /-
 Create an equality with MVars
 -/
-def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do 
+def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallMVarEquality {rw} : {ty}"
   let (ms, binders, tyNoForall) ← forallMetaTelescope ty
@@ -262,10 +264,10 @@ def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
 --  explode an equality with ∀ by creating many variations, from the local context.
 -- It is well founded because we destructure the inductive type, but lean is unable to
 -- infer this
-partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do 
+partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   if let Expr.forallE x xty body _ := ty then do {
   --dbg_trace "**forall is : (FA [{x} : {xty}] {body})"
-   withExprsOfType goal xty $ λ xval => do 
+   withExprsOfType goal xty $ λ xval => do
       -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
       -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
       addForallExplodedEquality_ goal (<- mkAppM' rw #[xval]) (← instantiateForall ty #[xval])
@@ -417,12 +419,12 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
 -- #check refl
  /-
   let (egg_rewrites , state)  <- rewrites.getElems.foldlM (init := ([], initState))
-      (fun xs_and_state stx => do 
-        let xs := xs_and_state.fst 
-        let state := xs_and_state.snd 
+      (fun xs_and_state stx => do
+        let xs := xs_and_state.fst
+        let state := xs_and_state.snd
         let (xs', state) <- (addAllLocalContextEqualities (bound := []) equalityTermType xs stx state)
         return (xs', state))
-  
+
   let explanations : List Eggxplanation <- (liftMetaMAtMain fun mvarId => do
     let lctx <- getLCtx
     let mctx <- getMCtx
@@ -508,7 +510,7 @@ for e in explanations do {
     let name : String := e.rule
     let ldecl_expr <- match (parseNat 100 name) >>= (state.findExpr) with
     | some e => pure e
-    | none => do 
+    | none => do
        throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
   let ldecl_expr <- if e.direction == Backward then mkEqSymm ldecl_expr else pure ldecl_expr
   dbg_trace (f!"15) aplying rewrite expression {ldecl_expr}")
@@ -527,4 +529,3 @@ return ()
 -- def not_rewrite : Int := 42
 -- def rewrite_wrong_type : (42 : Nat) = 42 := by { rfl }
 -- def rewrite_correct_type : (42 : Int) = 42 := by { rfl }
-
