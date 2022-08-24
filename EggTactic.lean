@@ -23,8 +23,8 @@ def egg_server_path : String :=
 
 structure EggRewrite where
   name: String
-  lhs: String
-  rhs: String
+  lhs: Sexp
+  rhs: Sexp
   rw: Expr
 
 instance : Inhabited EggRewrite where
@@ -47,41 +47,102 @@ instance : ToString Eggxplanation where
     let dir := if expl.direction == Forward then "fwd" else "bwd"
     toString f!"(Eggxplanation dir:{dir} rule:{expl.rule} args:{expl.args.toList})"
 
--- Parse the output egg sexpr as a Lean expr
-partial def parseEggSexprToExpr (s: Sexp): Except String Expr :=
- match s with
- | Sexp.atom x =>
-   if x.get 0 == '?'
-   then .error s!"Error parsing Eggxplanation {s}: Unexpected metavariable {x}."
-   else  .ok <| Expr.fvar (FVarId.mk (Name.mkSimple x.toString)) --  .error s!"Error parsing Eggxplanation {s}: please pick up expression {x} from the context"
- | Sexp.list _ (hd::tl) =>
-    if hd.toString == "ap"
-    then do
-        let f ← parseEggSexprToExpr tl[0]!
-        let tail := tl.drop 1 -- once lean fixes its stuff, I should be able to use tl[1:]
-        let args ← tail.mapM parseEggSexprToExpr
-        .ok <| mkAppN f args.toArray
-    else
-        .error s!"Error parsing Eggxplanation '{s}': Unexpected head '{hd}'"
- | Sexp.list _ xs => .error s!"Error parsing Eggxplanation '{s}': List unhandled {xs}"
+abbrev EggParseM := MetaM
+
+
+def nameToSexp: Name -> Sexp
+| Name.anonymous => "anonymous"
+| Name.str n s => Sexp.fromList ["str", nameToSexp n, s]
+| Name.num n i => Sexp.fromList ["num", nameToSexp n, (toString i)]
+
+-- | TODO: cleanup error handling
+def parseNameSexpr (sexpr: Sexp) : Name :=
+  match sexpr with
+  | Sexp.atom "anonymous" => Name.anonymous
+  | Sexp.list _ [Sexp.atom "str", n, Sexp.atom s] => Name.mkStr (parseNameSexpr n) s
+  | Sexp.list _ [Sexp.atom "num", n, Sexp.atom s] => Name.mkNum (parseNameSexpr n) (s.toNat!)
+  | _ => panic! "unexpected sexpr {sexpr}"
+
+
+
+def levelToSexp: Level → Sexp
+| Level.zero => "zero"
+| Level.succ l => Sexp.fromList ["succ", levelToSexp l]
+| Level.max l₁ l₂ => Sexp.fromList ["max", levelToSexp l₁, levelToSexp l₂]
+| Level.imax l₁ l₂ => Sexp.fromList ["imax", levelToSexp l₁, levelToSexp l₂]
+| Level.param n => Sexp.fromList ["param", nameToSexp n]
+| Level.mvar n => Sexp.fromList ["mvar", nameToSexp n.name]
+
+def parseLevelSexpr (s: Sexp): MetaM Level := do
+  match s with
+  | Sexp.atom "zero" => return Level.zero
+  | Sexp.list _ [Sexp.atom "succ", l] =>  return Level.succ (← parseLevelSexpr l)
+  | Sexp.list _ [Sexp.atom "max", l₁, l₂] => return Level.max (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
+  | Sexp.list _ [Sexp.atom "imax", l₁, l₂] => return Level.imax (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
+  | Sexp.list _ [Sexp.atom "param", n] => return Level.param (parseNameSexpr n)
+  | Sexp.list _ [Sexp.atom "mvar", n] => return Level.mvar (LevelMVarId.mk (← mkFreshUserName (parseNameSexpr n)))
+  | _ => throwError s!"unexpected level sexpr: {s}"
+
+/-
+convert this expression into a string, along with the names of the
+bound variables.
+-/
+def exprToSexp (e: Expr): MetaM Sexp :=
+match e with
+  | Expr.const name [] => return .fromList ["const", nameToSexp name, "nolevels"]
+  | Expr.const name levels => return .fromList ["const", nameToSexp name, .fromList ["levels", (levels.map levelToSexp)]]
+  | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!, but found bvar '{ix}'"
+  | Expr.fvar id => return .fromList ["fvar", nameToSexp id.name]
+  | Expr.mvar id => return  ("?" ++ (id.name.toString))
+  | Expr.lit (.natVal n)=> return .fromList ["litNat", toString n]
+  | Expr.app  l r => do
+     return (.fromList ["ap", (← exprToSexp l), (← exprToSexp r)])
+  | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
+
+
+partial def parseExprSexpr (s: Sexp): MetaM Expr := do
+  match s with
+  -- TODO: teach `egg` that empty sexp is okay
+  | Sexp.list _ [Sexp.atom "const", name, Sexp.atom "nolevels"] => do
+    return (Expr.const (parseNameSexpr name) [])
+    -- TODO: teach `egg` to not convert `(list (atom level))` to `(atom level)`
+  | Sexp.list _ [Sexp.atom "const", name, Sexp.list _ [Sexp.atom "levels", Sexp.atom "zero"] ] => do
+    return Expr.const (parseNameSexpr name) [Level.zero]
+  | Sexp.list _ [Sexp.atom "const", name, Sexp.list _ [Sexp.atom "levels", Sexp.list _ levels] ] => do
+    let levels ← levels.mapM parseLevelSexpr
+    return Expr.const (parseNameSexpr name) levels
+  | Sexp.list _ [Sexp.atom "fvar", n] => return mkFVar (FVarId.mk (parseNameSexpr n))
+  | Sexp.list _ [Sexp.atom "litNat", n] => return mkNatLit n.toAtom!.toNat!
+  | Sexp.list _ [Sexp.atom "ap", l, r] => return mkApp (← parseExprSexpr l) (← parseExprSexpr r)
+  | _ => throwError s!"unimplemented parseExprSexpr '{s}': {s}"
+
+
+def exceptToMetaM [ToString ε]: Except ε α -> MetaM α :=
+  fun e =>
+    match e with
+    | Except.error msg => throwError (toString msg)
+    | Except.ok x => return x
+
 
 -- | parse a fragment of an explanation into an EggRewrite
-def parseExplanation (j: Json) : Except String Eggxplanation := do
-  let l <- j.getArr?
-  let ty <- l[0]!.getStr?
+def parseExplanation (j: Json) : EggParseM Eggxplanation := do
+  let l <- exceptToMetaM j.getArr?
+  let ty <- exceptToMetaM l[0]!.getStr?
   dbg_trace "hello!"
   let d <- match ty with
   | "fwd" => pure Forward
   | "bwd" => pure Backward
-  | other => throw (toString f!"unknown direction {other} in |{j}")
-  let r <- l[1]!.getStr?
+  | other => throwError (toString f!"unknown direction {other} in |{j}")
+  let r <- exceptToMetaM l[1]!.getStr?
   let mut args : Array Expr := #[]
   for arg in l[2:] do
-     let sexp ← (parseSingleSexp (← arg.getStr?)).mapError toString
+     let sexp ← exceptToMetaM <| (parseSingleSexp (← exceptToMetaM arg.getStr?)).mapError toString
      -- (Rewrite=> <name> <expr>)
      --                   ^^^^^^2
-     let sexp := sexp.toList![2]!
-     args := args.push (← parseEggSexprToExpr sexp)
+     let sexp ← match sexp.toList? with
+       | .some xs => pure xs[2]!
+       | .none => throwError s!"incorrect sexp {sexp}"
+     args := args.push (← parseExprSexpr sexp)
   return { direction := d, rule := r, args := args
           : Eggxplanation }
 
@@ -105,8 +166,8 @@ def surround_escaped_quotes (s: String): String :=
 def EggRewrite.toJson (rewr: EggRewrite) :=
   "{"
     ++ surroundQuotes "name" ++ ":" ++ surroundQuotes rewr.name ++ ","
-    ++ surroundQuotes "lhs" ++ ":" ++ surroundQuotes rewr.lhs ++ ","
-    ++ surroundQuotes "rhs" ++ ":" ++ surroundQuotes rewr.rhs ++
+    ++ surroundQuotes "lhs" ++ ":" ++ surroundQuotes rewr.lhs.toString ++ ","
+    ++ surroundQuotes "rhs" ++ ":" ++ surroundQuotes rewr.rhs.toString ++
   "}"
 
 instance : ToString EggRewrite where
@@ -145,24 +206,6 @@ match n with
 | n + 1 => match as with | .nil => none |.cons a as => lean_list_get? as n
 
 def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n
-
-
-/-
-convert this expression into a string, along with the names of the
-bound variables.
--/
-def exprToString (e: Expr): MetaM String :=
-match e with
-  | Expr.const name levels => pure (name.toString)
-  | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!"
-  | Expr.fvar id => pure (id.name.toString)
-  | Expr.mvar id => pure ("?" ++ (id.name.toString))
-  | Expr.lit (.natVal n)=> pure (toString n)
-  | Expr.app  l r => do
-     let lstr <- exprToString l
-     let rstr <- exprToString r
-     pure $ "(ap " ++ lstr ++ " " ++ rstr ++ ")"
-  | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
 
 
 def Lean.Expr.getMVars (e: Expr) (arr: Array MVarId := #[]): Array MVarId :=
@@ -206,7 +249,7 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     go state.name2expr
 
 
-partial def addEggRewrite (rw: Expr) (lhs: String) (rhs: String): EggM Unit := do
+partial def addEggRewrite (rw: Expr) (lhs: Sexp) (rhs: Sexp): EggM Unit := do
   let i := (← get).ix
   dbg_trace s!"addEggRewrite rw:{rw} lhs:{lhs} rhs:{rhs} name:{i}"
 
@@ -254,7 +297,7 @@ def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
   -- the metavars that occur on the RHS is a subset of the LHS, and
   -- we flip the equality in the symmetric case.
   if rhs.getMVars.isSubsetOf lhs.getMVars then
-    addEggRewrite rw (← exprToString lhs) (← exprToString rhs)
+    addEggRewrite rw (← exprToSexp lhs) (← exprToSexp rhs)
   else if lhs.getMVars.isSubsetOf rhs.getMVars then
     dbg_trace "TODO: make symmetric rewrite when we have foralls: (LHS: {lhs}) (RHS: {rhs})"
     -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
@@ -296,7 +339,7 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   if ty.universallyQuantifiedEq? then
     if ty.isForall then do
-        addForallExplodedEquality goal rw ty
+        -- addForallExplodedEquality goal rw ty
         addForallMVarEquality rw ty
     else if ty.isEq then do
         addBareEquality rw ty
@@ -344,7 +387,7 @@ def runEggRequestRaw (requestJson: String): MetaM String := do
 
 
 -- parse the response, given the response as a string
-def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxplanation) := do
+def parseEggResponse (goal: MVarId) (responseString: String): EggParseM (List Eggxplanation) := do
     let outJson : Json <- match Json.parse responseString with
       | Except.error e => throwTacticEx `rawEgg goal e
       | Except.ok j => pure j
@@ -357,17 +400,13 @@ def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxpl
       dbg_trace "12) Creating explanation..."
       -- This whole thing is in an Except beacause everything in Json
       -- is written relative to Except, and not a general MonadError :(
-      let explanationE : Except String (List Eggxplanation) := do
-         -- extract explanation field from response
-         let expl <- (outJson.getObjVal? "explanation")
-         -- cast field to array
-         let expl <- Json.getArr? expl
-         -- map over each element into an explanation
-         let expl <- expl.mapM parseExplanation
-         return expl.toList
-      let explanation <- match explanationE with
-        | Except.error e => throwTacticEx `rawEgg goal (e)
-        | Except.ok v => pure v
+      -- extract explanation field from response
+      let explanation <- exceptToMetaM (outJson.getObjVal? "explanation")
+      -- cast field to array
+      let explanation <- exceptToMetaM <| Json.getArr? explanation
+      -- map over each element into an explanation
+      let explanation <- explanation.mapM parseExplanation
+      let explanation := explanation.toList
       dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
       return explanation
 
@@ -399,8 +438,8 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
 
   let eggRequest := {
-      targetLhs := (← exprToString goalLhs),
-      targetRhs := (← exprToString goalRhs),
+      targetLhs := (← exprToSexp goalLhs).toString,
+      targetRhs := (← exprToSexp goalRhs).toString,
       rewrites := rewrites
       : EggRequest
   }

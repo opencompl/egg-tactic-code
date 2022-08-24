@@ -2,19 +2,38 @@ import Lean
 open Lean
 
 inductive Sexp
-| atom: Substring → Sexp
+| atom: String → Sexp
 | list: Substring → List Sexp → Sexp
 deriving BEq, Inhabited, Repr
 
-def Sexp.toList! : Sexp → List Sexp
-| .atom ss => panic! s!"found atom at .toList {ss}"
-| .list _ xs => xs
+def Sexp.fromString : String → Sexp
+| s => Sexp.atom s
+
+instance : Coe String Sexp where
+  coe s := Sexp.fromString s
+
+def Sexp.fromList : List Sexp → Sexp
+| xs => Sexp.list "".toSubstring xs
+
+instance : Coe (List Sexp) Sexp where
+  coe := Sexp.fromList
+
 
 partial def Sexp.toString : Sexp → String
-| .atom ss => ss.toString
+| .atom s => s
 | .list _ xs => "(" ++ " ".intercalate (xs.map Sexp.toString) ++ ")"
 
 instance : ToString Sexp := ⟨Sexp.toString⟩
+
+
+def Sexp.toList? : Sexp → Option (List Sexp)
+| .atom _ => .none
+| .list _ xs => .some xs
+
+def Sexp.toAtom! : Sexp → String
+| .atom s => s
+| .list _ xs => panic! s!"expected atom, found list at {List.toString xs}"
+
 
 inductive SexpTok
 | sexp: Sexp →  SexpTok
@@ -150,7 +169,7 @@ partial def SexpM.parse: SexpM Unit := do
       SexpM.parse
   | .some (_, i) => do
       let s ← SexpM.takeString i
-      SexpM.pushSexp ((Sexp.atom s))
+      SexpM.pushSexp ((Sexp.atom s.toString))
       SexpM.parse
   | .none => do
       let state ← get

@@ -1,5 +1,24 @@
 import EggTactic
 
+
+
+-- TODO @andres: what egg gives us back is wrong. What we really need to know is the rewrite term that we need to use.
+-- This means we should build the sexpr (<rewrite-term> <arg-1> ... <arg-n>) and then use this to perform the rewrite.
+-- Instead, what `egg` gives us is the goal state after the rewrite.
+--
+-- This is a problem because we need to know the rewrite term to perform the rewrite.
+-- We can't just use the goal state because the goal state is the result of the rewrite.
+theorem testInstantiation
+  -- TODO: need to change definitions to make all arguments implicit, since those are the only kinds of rewrites
+  -- egg can cope with!
+  (group_inv: forall {g: Int}, g - g  = 0)
+  (h: Int) (k: Int): h - h = k - k := by
+ rawEgg [group_inv]
+
+
+
+#print testInstantiation
+
 theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
   intros;
   rawEgg [H]
@@ -45,15 +64,6 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
 #print testSuccessRev
 
 
--- {"request":"perform-rewrite","target-lhs":"(ap (ap (ap (ap (ap (ap HSub.hSub Int) Int) Int) (ap (ap instHSub Int) Int.instSubInt)) _uniq.350) _uniq.350)","target-rhs":"(ap (ap (ap (ap (ap (ap HSub.hSub Int) Int) Int) (ap (ap instHSub Int) Int.instSubInt)) _uniq.351) _uniq.351)","rewrites":[]}
-theorem testInstantiation
-  (group_inv: forall (g: Int), g - g  = 0)
-  (h: Int) (k: Int): h - h = k - k := by
- rawEgg [group_inv]
-
-
-
-#print testInstantiation
 
 /-
 theorem testManualInstantiation
