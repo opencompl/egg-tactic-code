@@ -48,13 +48,22 @@ instance : ToString Eggxplanation where
     toString f!"(Eggxplanation dir:{dir} rule:{expl.rule} args:{expl.args.toList})"
 
 -- Parse the output egg sexpr as a Lean expr
-def parseEggSexprToExpr (s: Sexp): Except String Expr :=
+partial def parseEggSexprToExpr (s: Sexp): Except String Expr :=
  match s with
  | Sexp.atom x =>
    if x.get 0 == '?'
    then .error s!"Error parsing Eggxplanation {s}: Unexpected metavariable {x}."
-   else .error s!"Error parsing Eggxplanation {s}: please pick up expression {x} from the context"
- | Sexp.list _ _ => .error "Error parsing Eggxplanation {s}: List unhandled"
+   else  .ok <| Expr.fvar (FVarId.mk (Name.mkSimple x.toString)) --  .error s!"Error parsing Eggxplanation {s}: please pick up expression {x} from the context"
+ | Sexp.list _ (hd::tl) =>
+    if hd.toString == "ap"
+    then do
+        let f ← parseEggSexprToExpr tl[0]!
+        let tail := tl.drop 1 -- once lean fixes its stuff, I should be able to use tl[1:]
+        let args ← tail.mapM parseEggSexprToExpr
+        .ok <| mkAppN f args.toArray
+    else
+        .error s!"Error parsing Eggxplanation '{s}': Unexpected head '{hd}'"
+ | Sexp.list _ xs => .error s!"Error parsing Eggxplanation '{s}': List unhandled {xs}"
 
 -- | parse a fragment of an explanation into an EggRewrite
 def parseExplanation (j: Json) : Except String Eggxplanation := do
@@ -247,7 +256,8 @@ def addBareEquality (rw: Expr) (ty: Expr): EggM Unit := do
   if rhs.getMVars.isSubsetOf lhs.getMVars then
     addEggRewrite rw (← exprToString lhs) (← exprToString rhs)
   else if lhs.getMVars.isSubsetOf rhs.getMVars then
-    addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
+    dbg_trace "TODO: make symmetric rewrite when we have foralls: (LHS: {lhs}) (RHS: {rhs})"
+    -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
   else
     dbg_trace "ERROR: have equality where RHS has more vars than LHS: (LHS: {lhs}) (RHS: {rhs})"
 
@@ -379,10 +389,14 @@ def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
 
 elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
+  dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
+
   let (_, goalLhs, goalRhs) ← match (← matchEq? (<- getMainTarget)) with
       | .none => throwError "Egg: target not equality: {<- getMainTarget}"
       | .some eq => pure eq
-      let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
+
+
+  let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
 
   let eggRequest := {
       targetLhs := (← exprToString goalLhs),

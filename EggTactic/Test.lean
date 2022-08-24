@@ -10,7 +10,7 @@ theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by
 
 set_option pp.analyze true in
 theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
-  (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint): bint = eint := by 
+  (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint): bint = eint := by
   --  rawEgg [not_rewrite]
   --  rawEgg [rewrite_wrong_type]
   -- rewrite [b_eq_d]
@@ -27,7 +27,7 @@ theorem testSuccess0Symm (anat: Nat) (bnat: Nat) (H: bnat = anat): anat = bnat :
   rawEgg [H]
 }
 
-#check testSuccess0Symm
+#print testSuccess0Symm
 
 -- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
 
@@ -52,6 +52,7 @@ theorem testInstantiation
  rawEgg [group_inv]
 
 
+
 #print testInstantiation
 
 /-
@@ -71,7 +72,7 @@ theorem testManualInstantiation
 -/
 
 
-theorem assoc_instantiate(G: Type) 
+theorem assoc_instantiate(G: Type)
   (mul: G → G → G)
   (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
   (x y z: G) : mul x (mul y z) = mul (mul x y) z := by {
@@ -90,7 +91,7 @@ theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
 
 
 
-/-  
+/-
       rw!("assoc-mul"; "(* ?a (* ?b ?c))" => "(* (* ?a ?b) ?c)"),
       rw!("assoc-mul'"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
       rw!("one-mul";  "(* 1 ?a)" => "?a"),
@@ -105,7 +106,7 @@ theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
       rw!("inv-right''";  "1" => "(* b (^-1 b))"),
       //rw!("anwser''";  "(* (^-1 b)(^-1 a))" => "ANSWER"),
 -/
-theorem inv_mul_cancel_left (G: Type) 
+theorem inv_mul_cancel_left (G: Type)
   (inv: G → G)
   (mul: G → G → G)
   (one: G)
@@ -115,7 +116,7 @@ theorem inv_mul_cancel_left (G: Type)
   (mulOne: forall (a: G), a = mul a one)
   (invRight: forall (a: G), one = mul a (inv a))
   : (inv (inv x) = x) := by {
-  rawEgg [assocMul, invLeft, mulOne, invRight
+  rawEgg [assocMul, invLeft, mulOne, invRight]
 
 }
 #print inv_mul_cancel_left
