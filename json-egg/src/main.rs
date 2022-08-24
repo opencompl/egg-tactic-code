@@ -104,6 +104,23 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 }
 
 
+fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
+    let op = Sexp::String(t.node.to_string());
+    let mut expr = if t.node.is_leaf() {
+        op
+    } else {
+        let mut vec = vec![op];
+        for child in &t.children {
+            vec.push(child.get_sexp());
+        }
+        Sexp::List(vec)
+    };
+
+    expr
+}
+
+
+
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
 fn flat_term_make_bindings<'a>(
@@ -188,7 +205,7 @@ fn check_rewrite<'a>(
                 direction: if is_forward { String::from("fwd") } else { String::from("bwd") }
             };
             for (var, ft) in &binding {
-                info.args.insert(var.to_string(), ft.get_sexp().to_string());
+                info.args.insert(var.to_string(), flat_term_to_raw_sexp(&ft).to_string());
             }
             return info;
         }
