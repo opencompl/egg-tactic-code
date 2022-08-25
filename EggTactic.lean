@@ -25,12 +25,16 @@ structure EggRewrite where
   name: String
   lhs: Sexp
   rhs: Sexp
-  mvars: Array MVarId -- list of mvars needed by this rewrite. Why do we need this again?
-  rw: Expr
+  pretendMVars: Array MVarId -- list of pretend mvars needed by this rewrite
+                      --  Why do we need this again?
+  rw: Expr -- the rewrite with fvars applied
+  unappliedRw: Expr -- the rewrite without fvars applied
   rwType: Expr
+  unappliedRwType: Expr
 
 instance : Inhabited EggRewrite where
-  default := EggRewrite.mk "default" "default" "default" #[] default default
+  default := EggRewrite.mk
+         "default" "default" "default" #[] default default default default
 
 inductive EggRewriteDirection where
   | Forward
@@ -263,7 +267,14 @@ def EggState.findExpr (state: EggState) (needle: Int): Option Expr :=
     go state.name2expr
 
 
-partial def addEggRewrite (rw: Expr) (ty: Expr) (lhs: Sexp) (rhs: Sexp) (mvars: Array MVarId): EggM Unit := do
+partial def addEggRewrite
+  (rw: Expr)
+  (unappliedRw: Expr)
+  (ty: Expr)
+  (unappliedRwType: Expr)
+  (lhs: Sexp)
+  (rhs: Sexp)
+  (pretendMVars: Array MVarId): EggM Unit := do
   let i := (← get).ix
   dbg_trace s!"addEggRewrite rw:{rw} ty:{ty} lhs:{lhs} rhs:{rhs} name:{i}"
 
@@ -272,8 +283,10 @@ partial def addEggRewrite (rw: Expr) (ty: Expr) (lhs: Sexp) (rhs: Sexp) (mvars: 
     , lhs := lhs
     , rhs := rhs
     , rw := rw
+    , unappliedRw := unappliedRw
     , rwType := ty
-    , mvars := mvars : EggRewrite }
+    , unappliedRwType := unappliedRwType
+    , pretendMVars := pretendMVars : EggRewrite }
   modify (fun state => { state with ix := i + 1, name2expr := (i, rw) :: state.name2expr, rewrites := egg_rewrite :: state.rewrites })
 
 def expr_get_forall_bound_vars: Expr -> List Name
@@ -314,7 +327,12 @@ match e with
 /-
 Create a regular equality of the form lhs = rhs
 -/
-def addBareEquality (rw: Expr) (ty: Expr) (mvars: Array MVarId): EggM Unit := do
+def addBareEquality
+  (rw: Expr)
+  (rwUnapplied: Expr)
+  (ty: Expr)
+  (unappliedRwType: Expr)
+  (mvars: Array MVarId): EggM Unit := do
   dbg_trace "**adding bareEquality {rw} : {ty}"
   -- Check if the lhs has all the mvars of the rhs
   let (lhs, rhs)  ←
@@ -327,7 +345,10 @@ def addBareEquality (rw: Expr) (ty: Expr) (mvars: Array MVarId): EggM Unit := do
   -- the metavars that occur on the RHS is a subset of the LHS, and
   -- we flip the equality in the symmetric case.
   if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
-    addEggRewrite rw ty (← exprToSexp lhs) (← exprToSexp rhs) mvars
+    addEggRewrite rw rwUnapplied
+        ty unappliedRwType
+        (← exprToSexp lhs)
+        (← exprToSexp rhs) mvars
   else if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
     dbg_trace "TODO: make symmetric rewrite when we have foralls: (LHS: {lhs}) (RHS: {rhs})"
     -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
@@ -342,22 +363,29 @@ def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
   dbg_trace "**adding forallMVarEquality {rw} : {ty}"
   let (ms, binders, tyNoForall) ← forallMetaTelescope ty
   -- | code taken from Lean/Meta/Rewrite.lean by looking at `heq`.
-  let rw := mkAppN rw ms -- is this correct?
-  addBareEquality rw tyNoForall (ms.map fun e => e.mvarId!)
+  let rwApplied := mkAppN rw ms -- is this correct?
+  addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!)
 
 
 --  explode an equality with ∀ by creating many variations, from the local context.
 -- It is well founded because we destructure the inductive type, but lean is unable to
 -- infer this
-partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
+partial def addForallExplodedEquality_ (goal: MVarId)
+  (rw: Expr) (rwUnapplied: Expr)
+  (ty: Expr)
+  (unappliedRwType: Expr): EggM Unit := do
   if let Expr.forallE x xty body _ := ty then do {
   --dbg_trace "**forall is : (FA [{x} : {xty}] {body})"
    withExprsOfType goal xty $ λ xval => do
       -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
       -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
-      addForallExplodedEquality_ goal (<- mkAppM' rw #[xval]) (← instantiateForall ty #[xval])
+      addForallExplodedEquality_ goal
+          (<- mkAppM' rw #[xval])
+          rwUnapplied
+          (← instantiateForall ty #[xval])
+          unappliedRwType
   } else {
-    addBareEquality rw ty #[]
+    addBareEquality rw rwUnapplied ty unappliedRwType #[]
   }
 
 
@@ -365,7 +393,7 @@ partial def addForallExplodedEquality_ (goal: MVarId) (rw: Expr) (ty: Expr): Egg
 def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallExplodedEquality {rw} : {ty}"
-  addForallExplodedEquality_ goal rw ty
+  addForallExplodedEquality_ goal rw rw ty ty
 
 -- Add an expression into the EggM context, if it is indeed a rewrite
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
@@ -374,7 +402,7 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
         -- addForallExplodedEquality goal rw ty
         addForallMVarEquality rw ty
     else if ty.isEq then do
-        addBareEquality rw ty #[]
+        addBareEquality rw rw ty ty #[]
 
 
 -- Add all equalities from the local context
@@ -419,31 +447,53 @@ def runEggRequestRaw (requestJson: String): MetaM String := do
     return stdout
 
 
-def Eggxplanation.instantiateTarget
+def Eggxplanation.instantiateEqType
   (expl: Eggxplanation)
-  (rwType: Expr): MetaM Expr := do
-
+  (eggrw: EggRewrite): MetaM (Expr × Expr) := do
     let eq ← match expl.direction with
         | .Forward =>  mkEq expl.source expl.result
         | .Backward =>  mkEq expl.result expl.source
     dbg_trace "*** eq                       : {eq}"
-    dbg_trace "*** expr before instantiation: {rwType}"
-    let isEq ← isDefEq rwType eq
-    dbg_trace "*** isEq: {isEq}"
-    let rwType ← instantiateMVars rwType
-    dbg_trace "*** expr after instantiation:  {rwType}"
+    let mut args : Array ( Expr) := #[]
+    for mvar in eggrw.pretendMVars do
+      let needle := mvarIdToSexp mvar
+      match expl.mvars.find? (fun mvarExpr => mvarExpr.1 == needle) with
+      | .some (_, val) =>
+          args := args.push (val)
+      | .none => throwError "unable to find value for mvar: {mvar}"
 
-    -- for mvar in eggrw.mvars do
-    --   match expl.mvars.find? (fun kv => kv.1 == mvarIdToSexp mvar) with
-    --   | .some (_, e) => do
-    --       dbg_trace (s!"***instantiating {mvar.name} with {e}")
-    --       let b ← isDefEq (mkMVar mvar) e
-    --   | .none =>
-    --         dbg_trace (s!"***ERROR: unable to find mvar {mvar.name}")
+    let (ms, binders, rwTypeAppliedToMVar) ← forallMetaTelescope eggrw.unappliedRwType
+    for (m, arg) in ms.zip args do
+      dbg_trace "*** mvar {m} := {arg}"
+      let _ ← isDefEq m arg -- force unification
 
-    -- let e ← instantiateMVars eggrw.rw
+    let rwTy ← instantiateMVars rwTypeAppliedToMVar
+    dbg_trace "***rwTy: {rwTy}"
+    let rwTy ← match (← matchEq? rwTy) with
+                | .some (_, source, target) =>
+                    if expl.direction == .Forward then
+                      mkEq source target
+                    else
+                      mkEq target source
+                | .none => throwError "unable to matchEq? {rwTy}"
+    dbg_trace "***rwTy: {rwTy}"
 
-    return rwType
+    -- let (ms, binders, rwAppliedToMVar) ← forallMetaTelescope eggrw.unappliedRw
+    -- for (m, arg) in ms.zip args do
+    --   dbg_trace "*** mvar {m} := {arg}"
+    --   let _ ← isDefEq m arg -- force unification
+    -- let rw ← instantiateMVars rwAppliedToMVar
+    let rw := eggrw.unappliedRw
+    dbg_trace "***rw: {rw}"
+    let rw := mkAppN rw args
+    dbg_trace "***rw: {rw}"
+    let rw ← instantiateMVars rw
+    dbg_trace "***rw: {rw}"
+    let rw ← (if expl.direction == EggRewriteDirection.Forward
+             then pure rw
+             else mkEqSymm rw)
+    dbg_trace "***rw: {rw}"
+    return (rw, rwTy)
 
 -- parse the response, given the response as a string
 def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxplanation) := do
@@ -486,6 +536,8 @@ def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :
     s!":= {decl.toExpr} : {← inferType decl.toExpr}")
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
 
+
+
 elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
   dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
 
@@ -512,7 +564,6 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
       |  .none => throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
     dbg_trace (s!"14.6) found eggRewrite {eggRewrite}\n\twith rw {eggRewrite.rw} : {<- inferType eggRewrite.rw}")
     dbg_trace (s!"15) applying rewrite expression eggRewrite: {eggRewrite} to target: {<- getMainTarget}")
-    let metaMSavedState ← saveState
     -- let rwType <- e.instantiateTarget eggRewrite.rwType
     -- let rewriteResult <- rewrite
     --   (← getMainGoal)
@@ -522,36 +573,28 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
     -- dbg_trace (s!"16) rewritten to: {rewriteResult.eNew} with proof: {rewriteResult.eqProof}")
     -- dbg_trace (s!"16) rewritten to: {e.result} with proof: {rewriteResult.eqProof}")
     -- let goal' ← replaceTargetEq (<- getMainGoal) rewriteResult.eNew rewriteResult.eqProof
-    let eggxplanationTy ← (if e.direction == EggRewriteDirection.Forward
-         then (mkEq e.source e.result)
-         else (mkEq e.result e.source))
-    let (eggLhs, eggRhs) := if e.direction == EggRewriteDirection.Forward
-         then (e.source, e.result)
-         else (e.result, e.source)
+    let (eggxplanationRw, eggxplanationRwTy) ← e.instantiateEqType eggRewrite
+    -- let (eggLhs, eggRhs) := if e.direction == EggRewriteDirection.Forward
+    --      then (e.source, e.result)
+    --      else (e.result, e.source)
 
     let (mainLhs, mainRhs) ← match (← matchEq? (<- getMainTarget)) with
       | .none => throwError "Egg: target not equality: {<- getMainTarget}"
       | .some (_, lhs, rhs) => pure (lhs, rhs)
-    dbg_trace (s!"16) eggLhs:       {eggLhs}")
+    -- dbg_trace (s!"16) eggLhs:       {eggLhs}")
     dbg_trace (s!"16) mainLhs     : {mainLhs}")
     dbg_trace s!"16) --"
     dbg_trace (s!"16) mainRhs     : {mainRhs}")
-    dbg_trace (s!"16) eggRhs     : {eggRhs}")
+    -- dbg_trace (s!"16) eggRhs     : {eggRhs}")
     dbg_trace s!"16) --"
-    let isEq ← isDefEq eggLhs mainLhs
-    dbg_trace (s!"16) isEq:          : {isEq}")
-    let rw := eggRewrite.rw
-    let rw ← instantiateMVars
-            (if e.direction == EggRewriteDirection.Forward
-             then rw
-             else ← mkEqSymm rw)
-    dbg_trace (s!"16) rewrite        : {rw}")
-    dbg_trace (s!"16) rewrite type   : {← inferType rw}")
-    restoreState metaMSavedState
+    -- let isEq ← isDefEq eggLhs mainLhs
+    -- dbg_trace (s!"16) isEq:          : {isEq}")
+    dbg_trace (s!"16) rewrite        : {eggxplanationRw}")
+    dbg_trace (s!"16) rewrite type   : {← inferType eggxplanationRw}")
     let rewriteResult <- rewrite
         (<- getMainGoal)
         (<- getMainTarget)
-        rw
+        eggxplanationRw
         (symm := e.direction == Backward)
 
     dbg_trace (f!"rewritten to: {rewriteResult.eNew}")
@@ -562,7 +605,7 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
     -- dbg_trace (s!"18) new goal: {goal'.name} : {goal'ty}")
     -- replaceMainGoal [goal'] -- replace main goal with new goal + subgoals
   -- TODO: replace 'simp' with something that dispatches 'a=a' sanely.
-  -- let _ <- simpGoal (<- getMainGoal) (<- Simp.Context.mkDefault)
+  let _ <- simpGoal (<- getMainGoal) (<- Simp.Context.mkDefault)
   return ()
 
 -- #check refl
