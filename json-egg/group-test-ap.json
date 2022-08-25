@@ -1,0 +1,11 @@
+{
+    "request": "perform-rewrite",
+    "target-lhs": "(ap ^-1 (ap ^-1 a))",
+    "target-rhs": "a",
+    "rewrites": [
+        {"name": "assoc-mul", "lhs": "(ap (ap * ?a) (ap (ap * ?b) ?c))" , "rhs": "(ap (ap * (ap (ap * ?a) ?b)) ?c)"},
+        {"name": "inv-left", "lhs":  "(ap (ap * (ap ^-1 ?a)) ?a)" , "rhs": "1"},
+        {"name": "mul-one'", "lhs":  "?a" , "rhs": "(ap (ap * ?a) 1)" },
+        {"name": "inv-right-a", "lhs":  "1" , "rhs": "(ap (ap * a) (ap ^-1 a))"}
+    ]
+}
