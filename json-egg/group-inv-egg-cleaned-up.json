@@ -1,0 +1,27 @@
+{
+   "request":"perform-rewrite",
+   "target-lhs":"(ap inv (ap inv x))",
+   "target-rhs":"x",
+   "rewrites":[
+      {
+         "name":"3",
+         "lhs":"one",
+         "rhs":"(ap (ap mul x) (ap inv x))"
+      },
+      {
+         "name":"2",
+         "lhs":"?_uniq.562",
+         "rhs":"(ap (ap mul ?_uniq.562) one)"
+      },
+      {
+         "name":"1",
+         "lhs":"(ap (ap mul (ap inv ?_uniq.561)) ?_uniq.561)",
+         "rhs":"one"
+      },
+      {
+         "name":"0",
+         "lhs":"(ap (ap mul ?_uniq.558) (ap (ap mul ?_uniq.559) ?_uniq.560))",
+         "rhs":"(ap (ap mul (ap (ap mul ?_uniq.558) ?_uniq.559)) ?_uniq.560)"
+      }
+   ]
+}
