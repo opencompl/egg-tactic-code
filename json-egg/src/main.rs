@@ -111,8 +111,6 @@ fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
     let mut expr = if t.node.is_leaf() {
         op
     } else {
-        // (Rewrite<= inv-left <sexp>)
-        //                     ^^^^2
         let mut vec = vec![op];
         for child in &t.children {
             vec.push(flat_term_to_raw_sexp(child));
@@ -163,6 +161,7 @@ fn flat_term_binding<'a>(t: &'a FlatTerm, lhs: &PatternAst, rhs: &PatternAst) ->
     let lhs_nodes = lhs.as_ref();
     // let rhs_nodes = rhs.as_ref();
     let mut bindings = Default::default();
+    // TODO: eliminate if it is exactly the same as `FlatTerm.make_bindings`
     flat_term_make_bindings(t, lhs_nodes, lhs_nodes.len() - 1, &mut bindings);
     // FlatTerm::from_pattern(rhs_nodes, rhs_nodes.len() - 1, &bindings)
     return bindings.clone();
@@ -220,8 +219,13 @@ fn check_rewrite<'a>(
 }
 
 
-
-
+/*
+ Check if at the right point on the AST, if not,
+ recursively call this function on children. 
+ Note that this is necessary because FlatTerm represents
+ the full AST annotated with the rewrite information at the
+ point of the subtree that is rewritten.
+*/
 fn check_rewrite_at
     (current: &FlatTerm,
     next: &FlatTerm,
