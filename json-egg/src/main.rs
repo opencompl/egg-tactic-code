@@ -4,6 +4,7 @@ use egg::{rewrite as rw, *};
 //use std::arch::x86_64::m128Ext;
 use std::borrow::Borrow;
 use std::rc::Rc;
+use core::time::Duration;
 use std::collections::HashMap;
 // use std::f32::consts::E;
 use std::{io};
@@ -301,7 +302,9 @@ fn handle_request(req: Request) -> Response {
             let rhs_id = graph.add_expr(&target_rhs_expr);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
-            .with_node_limit(4096)
+            .with_node_limit(256000)
+            .with_time_limit(Duration::from_secs(60 * 60))
+            .with_iter_limit(99999)
             .with_egraph(graph)
             .with_explanations_enabled()
             .run(&new_rewrites);

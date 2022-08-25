@@ -380,7 +380,7 @@ partial def addForallExplodedEquality_ (goal: MVarId)
       -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
       -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
       addForallExplodedEquality_ goal
-          (<- mkAppM' rw #[xval])
+          (Expr.beta rw #[xval])
           rwUnapplied
           (← instantiateForall ty #[xval])
           unappliedRwType
