@@ -595,7 +595,6 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
         (<- getMainGoal)
         (<- getMainTarget)
         eggxplanationRw
-        (symm := e.direction == Backward)
 
     dbg_trace (f!"rewritten to: {rewriteResult.eNew}")
     let mvarId' ← replaceTargetEq (← getMainGoal) rewriteResult.eNew rewriteResult.eqProof

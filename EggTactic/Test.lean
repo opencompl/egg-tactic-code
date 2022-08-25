@@ -18,7 +18,7 @@ theorem testInstantiation
 
 #print testInstantiation
 
-/-
+
 theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
   intros;
   rawEgg [H]
@@ -131,4 +131,3 @@ theorem inv_mul_cancel_left (G: Type)
 }
 #print inv_mul_cancel_left
 
--/
