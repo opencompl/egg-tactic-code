@@ -64,10 +64,11 @@ enum Request {
 #[derive(Serialize,Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct LeanRewriteInfo {
+    source: String, // the input expression before the rewrite
     rewrite: String, // name of the rewrite
-    args: HashMap<String, String>, // metavariable values.
+    mvars: HashMap<String, String>, // metavariable values.
     direction: String, // direction of the rewrite
-
+    result: String // the output/result expression after the rewrite
 }
 
 
@@ -109,9 +110,11 @@ fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
     let mut expr = if t.node.is_leaf() {
         op
     } else {
+        // (Rewrite<= inv-left <sexp>)
+        //                     ^^^^2
         let mut vec = vec![op];
         for child in &t.children {
-            vec.push(child.get_sexp());
+            vec.push(flat_term_to_raw_sexp(child));
         }
         Sexp::List(vec)
     };
@@ -201,11 +204,13 @@ fn check_rewrite<'a>(
             let binding = flat_term_binding(current, lhs, rhs);
             let mut info = LeanRewriteInfo {
                 rewrite: rewrite.name.to_string(),
-                args: HashMap::new(),
-                direction: if is_forward { String::from("fwd") } else { String::from("bwd") }
+                mvars: HashMap::new(),
+                direction: if is_forward { String::from("fwd") } else { String::from("bwd") },
+                source: flat_term_to_raw_sexp(current).to_string(),
+                result: flat_term_to_raw_sexp(next).to_string()
             };
             for (var, ft) in &binding {
-                info.args.insert(var.to_string(), flat_term_to_raw_sexp(&ft).to_string());
+                info.mvars.insert(var.to_string(), flat_term_to_raw_sexp(&ft).to_string());
             }
             return info;
         }
