@@ -69,9 +69,9 @@ def nameToSexp: Name -> Sexp
 def parseNameSexpr (sexpr: Sexp) : MetaM Name := do
   match sexpr with
   | Sexp.atom "anonymous" => return Name.anonymous
-  | Sexp.list _ [Sexp.atom "str", n, Sexp.atom s] =>
+  | Sexp.list [Sexp.atom "str", n, Sexp.atom s] =>
     return Name.mkStr (← parseNameSexpr n) s
-  | Sexp.list _ [Sexp.atom "num", n, Sexp.atom s] =>
+  | Sexp.list [Sexp.atom "num", n, Sexp.atom s] =>
     return Name.mkNum (← parseNameSexpr n) (s.toNat!)
   | _ => throwError s!"unexpected sexpr {sexpr}"
 
@@ -92,11 +92,11 @@ def levelToSexp: Level → Sexp
 def parseLevelSexpr (s: Sexp): MetaM Level := do
   match s with
   | Sexp.atom "zero" => return Level.zero
-  | Sexp.list _ [Sexp.atom "succ", l] =>  return Level.succ (← parseLevelSexpr l)
-  | Sexp.list _ [Sexp.atom "max", l₁, l₂] => return Level.max (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
-  | Sexp.list _ [Sexp.atom "imax", l₁, l₂] => return Level.imax (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
-  | Sexp.list _ [Sexp.atom "param", n] => return Level.param (← parseNameSexpr n)
-  | Sexp.list _ [Sexp.atom "mvar", n] => return Level.mvar (LevelMVarId.mk (← parseNameSexpr n))
+  | Sexp.list [Sexp.atom "succ", l] =>  return Level.succ (← parseLevelSexpr l)
+  | Sexp.list [Sexp.atom "max", l₁, l₂] => return Level.max (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
+  | Sexp.list [Sexp.atom "imax", l₁, l₂] => return Level.imax (← parseLevelSexpr l₁) (← parseLevelSexpr l₂)
+  | Sexp.list [Sexp.atom "param", n] => return Level.param (← parseNameSexpr n)
+  | Sexp.list [Sexp.atom "mvar", n] => return Level.mvar (LevelMVarId.mk (← parseNameSexpr n))
   | _ => throwError s!"unexpected level sexpr: {s}"
 
 /-

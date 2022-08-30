@@ -1,9 +1,11 @@
 import Lean
 open Lean
 
+-- @bollu: I removed the substring in `list` as we don't really use it for anything and
+-- it just complicates things
 inductive Sexp
 | atom: String → Sexp
-| list: Substring → List Sexp → Sexp
+| list: List Sexp → Sexp
 deriving BEq, Inhabited, Repr
 
 def Sexp.fromString : String → Sexp
@@ -13,7 +15,7 @@ instance : Coe String Sexp where
   coe s := Sexp.fromString s
 
 def Sexp.fromList : List Sexp → Sexp
-| xs => Sexp.list "".toSubstring xs
+| xs => Sexp.list xs
 
 instance : Coe (List Sexp) Sexp where
   coe := Sexp.fromList
@@ -21,18 +23,17 @@ instance : Coe (List Sexp) Sexp where
 
 partial def Sexp.toString : Sexp → String
 | .atom s => s
-| .list _ xs => "(" ++ " ".intercalate (xs.map Sexp.toString) ++ ")"
+| .list xs => "(" ++ " ".intercalate (xs.map Sexp.toString) ++ ")"
 
 instance : ToString Sexp := ⟨Sexp.toString⟩
 
-
 def Sexp.toList? : Sexp → Option (List Sexp)
 | .atom _ => .none
-| .list _ xs => .some xs
+| .list xs => .some xs
 
 def Sexp.toAtom! : Sexp → String
 | .atom s => s
-| .list _ xs => panic! s!"expected atom, found list at {List.toString xs}"
+| .list xs => panic! s!"expected atom, found list at {List.toString xs}"
 
 
 inductive SexpTok
@@ -51,10 +52,8 @@ deriving BEq, Repr
 def SexpState.fromString (s: String): SexpState :=
   { it := s.iter : SexpState }
 
-
 instance : Inhabited SexpState where
   default := SexpState.fromString ""
-
 
 inductive SexpError
 | unmatchedOpenParen (ix: String.Iterator): SexpError
@@ -69,7 +68,6 @@ instance : ToString SexpError where toString := λ err => match err with
 
 abbrev SexpM := EStateM SexpError SexpState
 
-
 def SexpM.peek: SexpM (Option (Char × String.Pos)) := do
   let state ← get
   return if state.it.atEnd then .none else .some (state.it.curr, state.it.i)
@@ -79,10 +77,10 @@ def SexpM.curPos: SexpM String.Pos := do
   return state.it.i
 
 -- Stop is a good name, because it indicates that it's exclusive
+-- (AG: I don't read it as being exclusive from the name 'stop')
 def SexpM.mkSubstring (l: String.Pos) (r: String.Pos): SexpM Substring := do
   let state ← get
   return { str := state.it.s, startPos := l, stopPos := r}
-
 
 def SexpM.advance: SexpM Unit := do
   modify (fun state => { state with it := state.it.next })
@@ -127,16 +125,12 @@ def stackPopTillOpen (stk: List SexpTok) (sexps: List Sexp := []): Option (Strin
   | SexpTok.opening openPos :: rest => (.some (openPos, rest, sexps))
   | SexpTok.sexp s :: rest => stackPopTillOpen rest (s :: sexps)
 
-
-
-
 -- collapse the current stack till the last ( into a single Sexp.list
 def SexpM.matchClosingParen: SexpM Unit := do
   let state ← get
   match stackPopTillOpen state.stack with
-  | (.some (openPos, stk, sexps)) =>
-    let substr := Substring.mk state.it.s openPos state.it.i
-    let sexp := Sexp.list substr sexps
+  | (.some (_, stk, sexps)) =>
+    let sexp := Sexp.list sexps
     modify (fun state => { state with stack := stk })
     SexpM.pushSexp sexp
   | (.none) => throw (SexpError.unmatchedCloseParen state.it)
@@ -175,7 +169,7 @@ partial def SexpM.parse: SexpM Unit := do
       let state ← get
       match stackPopTillOpen state.stack with
       | (.some (openPos, _, _)) =>
-          throw <| SexpError.unmatchedOpenParen ({ s := state.it.s, i := openPos : String.Iterator })
+          throw <| SexpError.unmatchedOpenParen   ({ s := state.it.s, i := openPos : String.Iterator })
       | (.none) => return ()
 
 -- | Parse a list of (possibly empty) sexps.
@@ -199,3 +193,4 @@ def parseSingleSexp (s: String): Except SexpError Sexp := do
 #eval parseSexpList "a b c"
 #eval parseSexpList "(a b) (c d)"
 #eval parseSingleSexp "(a b)"
+#eval parseSingleSexp "(a (b c) d)"
