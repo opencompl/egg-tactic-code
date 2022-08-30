@@ -167,28 +167,6 @@ fn flat_term_binding<'a>(t: &'a FlatTerm, lhs: &PatternAst, rhs: &PatternAst) ->
     return bindings.clone();
 }
 
-fn extract_rule_from_flat_term(t: &FlatTerm) -> Option<(Vec<String>, Sexp)> {
-    match (t.forward_rule, t.backward_rule){
-        (Some(rule), _) => {
-            let node = t.node.clone();
-            Some((vec!["fwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp()))
-        },
-        (_, Some(rule)) => Some((vec!["bwd".to_string(), rule.as_str().to_string(), t.get_sexp().to_string()], t.get_sexp())),
-        (None, None) => {
-            for c in &t.children {
-                match extract_rule_from_flat_term(&c) {
-                    Some(mut rule) => {
-                        return Some(rule)
-                    },
-                    None => ()
-                }
-            }
-            return None
-        }
-    }
-}
-
-
 // if the rewrite is just patterns, then it can check it
 fn check_rewrite<'a>(
     current: &'a FlatTerm,
@@ -306,9 +284,9 @@ fn handle_request(req: Request) -> Response {
             let rhs_id = graph.add_expr(&target_rhs_expr);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
-            .with_node_limit(256000)
+            .with_node_limit(5000)
             .with_time_limit(Duration::from_secs(60 * 60))
-            .with_iter_limit(99999)
+            .with_iter_limit(9999)
             .with_egraph(graph)
             .with_explanations_enabled()
             .run(&new_rewrites);
@@ -325,20 +303,9 @@ fn handle_request(req: Request) -> Response {
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
                 let explanation = check_proof(new_rewrites, flat_explanation);
-                // println!("DEBUG:iterating on the flat explanation \n{:?}\n..", flat_explanation);
-                // for e in flat_explanation {
-                //     let rule = extract_rule_from_flat_term(e);
-                //     // eprintln!("expr: {} | forward_rule: {:?}", e.get_sexp(), rule);
-                //     match rule  {
-                //         Some((r, _sexp)) => {
-                //             rules.push(r);
-                //         }
-                //         None => ()
-                //     }
-                // }
                 Response::PerformRewrite { success: true, explanation: explanation }
             } else {
-                Response::Error {error: format!("no rewrite found! egraph: {:?}", runner.egraph.dump()) }
+                Response::Error {error: format!("no rewrite found! reason: {:?}", runner.stop_reason) }
 
             }
         }

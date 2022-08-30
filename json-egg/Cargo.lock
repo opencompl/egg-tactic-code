@@ -34,8 +34,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "egg"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1ac8ee5bbc11b03179e8cab6259a15fc85c1bcab09dcf4bd343db7899b0610c"
+source = "git+https://github.com/egraphs-good/egg.git?rev=a851106#a8511064e76be2c88d619622b7f2575fb6542368"
 dependencies = [
  "env_logger 0.9.0",
  "fxhash",
@@ -270,10 +269,11 @@ checksum = "2fd0db749597d91ff862fd1d55ea87f7855a744a8425a64695b6fca237d1dad1"
 
 [[package]]
 name = "symbol_table"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a870ced3953e40e68e922897faf8e43b4c507065c236e4d921b8c0aa0c67d68"
+checksum = "32bf088d1d7df2b2b6711b06da3471bc86677383c57b27251e18c56df8deac14"
 dependencies = [
+ "ahash",
  "hashbrown",
  "serde",
 ]
