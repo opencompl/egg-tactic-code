@@ -142,7 +142,7 @@ def exceptToMetaM [ToString ε]: Except ε α -> MetaM α :=
 
 
 -- | parse a fragment of an explanation into an EggRewrite
-def parseExplanation (j: Json) : MetaM Eggxplanation := do
+def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation := do
   let direction ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "direction").getStr?
   let direction <- match direction with
     | "fwd" => pure Forward
@@ -158,12 +158,12 @@ def parseExplanation (j: Json) : MetaM Eggxplanation := do
     return (mvaridSexp, expr) :: out
   })
   let result ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "result").getStr?
-  let result ← exceptToMetaM <| parseSingleSexp result
-  let result ← parseExprSexpr result
+  let result ← exceptToMetaM <| (parseSingleSexp result)
+  let result ← parseExprSexpr $ result.unsimplify mapping
 
   let source ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "source").getStr?
   let source ← exceptToMetaM <| parseSingleSexp source
-  let source ← parseExprSexpr source
+  let source ← parseExprSexpr $ source.unsimplify mapping
 
   return { direction := direction
           , rule := rewrite -- TODO: make consistent in terminology
@@ -173,14 +173,14 @@ def parseExplanation (j: Json) : MetaM Eggxplanation := do
           : Eggxplanation }
 
 -- | Actually do the IO. This incurs an `unsafe`.
-unsafe def unsafePerformIO [Inhabited a] (io: IO a): a :=
+unsafe def unsafePerformIO [Inhabited α] (io: IO α): α :=
   match unsafeIO io with
   | Except.ok a    =>  a
   | Except.error _ => panic! "expected io computation to never fail"
 
 -- | Circumvent the `unsafe` by citing an `implementedBy` instance.
 @[implementedBy unsafePerformIO]
-def performIO [Inhabited a] (io: IO a): a := Inhabited.default
+def performIO [Inhabited α] (io: IO α): α := Inhabited.default
 
 
 def surroundQuotes (s: String): String :=
@@ -203,6 +203,7 @@ instance : ToString EggRewrite where
 structure EggRequest where
   targetLhs: String
   targetRhs: String
+  varMapping : VariableMapping
   rewrites: List EggRewrite
 
 def EggRequest.toJson (e: EggRequest): String :=
@@ -223,15 +224,15 @@ def Lean.Json.getArr! (j: Json): Array Json :=
   | Json.arr a => a
   | _ => #[]
 
-def Lean.List.contains [DecidableEq a] (as: List a) (needle: a): Bool :=
+def Lean.List.contains [DecidableEq α] (as: List α) (needle: α): Bool :=
   as.any (. == needle)
 
-def lean_list_get? (as: List a) (n: Nat): Option a :=
+def lean_list_get? (as: List α) (n: Nat): Option α :=
 match n with
-| 0 => match as with | .nil => none | .cons a as => some a
-| n + 1 => match as with | .nil => none |.cons a as => lean_list_get? as n
+| 0 => match as with | .nil => none | .cons a _ => some a
+| n + 1 => match as with | .nil => none |.cons _ as => lean_list_get? as n
 
-def Lean.List.get? (as: List a) (n: Nat): Option a := lean_list_get? as n
+def Lean.List.get? (as: List α) (n: Nat): Option α := lean_list_get? as n
 
 
 structure EggState where
@@ -520,25 +521,9 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
         panic! "error unpacking rewrites"
     return (substituted.head!, substituted.tail!.head!,resRewrites,mapping)
 
-def unsimplifyRewrites (rewrites : List EggRewrite) (mapping : VariableMapping)
-  : List EggRewrite := Id.run do
-    let mut resRewrites := []
-    let rewriteSexps := List.join $  rewrites.map  λ rw => [rw.lhs,rw.rhs]
-    let mut remaining := unsimplifySExps rewriteSexps mapping
-    for rw in rewrites do
-      if let lhs::rhs::remaining' := remaining then
-        resRewrites := resRewrites ++
-          [{ name := rw.name, lhs := lhs, rhs := rhs,
-             pretendMVars := rw.pretendMVars, rw := rw.rw,
-             unappliedRw := rw.unappliedRw, rwType := rw.rwType,
-             unappliedRwType := rw.unappliedRwType : EggRewrite}]
-        remaining := remaining'
-      else
-        panic! "error unpacking rewrites"
-    return resRewrites
-
 -- parse the response, given the response as a string
-def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxplanation) := do
+def parseEggResponse (goal: MVarId) (varMapping : VariableMapping) (responseString: String) :
+  MetaM (List Eggxplanation) := do
     let outJson : Json <- match Json.parse responseString with
       | Except.error e => throwTacticEx `rawEgg goal e
       | Except.ok j => pure j
@@ -556,18 +541,15 @@ def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxpl
       -- cast field to array
       let explanation <- exceptToMetaM <| Json.getArr? explanation
       -- map over each element into an explanation
-      let explanation <- explanation.mapM parseExplanation
+      let explanation <- explanation.mapM (parseExplanation varMapping)
       let explanation := explanation.toList
       dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
       return explanation
 
-def Eggxplanation.unsimplify (mapping : VariableMapping) (explanation : Eggxplanation)
-  : Eggxplanation := explanation -- TODO: implement this properly?
-
 -- High level wrapped aroung runEggRequestRaw that is well-typed, and returns the
 -- list of explanations
 def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanation) :=
-  runEggRequestRaw request.toJson >>= parseEggResponse goal
+  runEggRequestRaw request.toJson >>= (parseEggResponse goal request.varMapping)
 
 -- Add rewrites with known names 'rewriteNames' from the local context of 'goalMVar'
 def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :=
@@ -594,14 +576,17 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
     (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
+  dbg_trace "simplifying {(← exprToSexp goalLhs)} to {simplifiedLhs}"
+  dbg_trace "simplifying {(← exprToSexp goalRhs)} to {simplifiedRhs}"
+  dbg_trace "simplifying {rewrites} to {simplifiedRewrites}"
   let eggRequest := {
     targetLhs := simplifiedLhs.toString,
     targetRhs := simplifiedRhs.toString,
     rewrites := simplifiedRewrites
+    varMapping := mapping
     : EggRequest
   }
-  let explanations := (← runEggRequest (← getMainGoal) eggRequest).map $
-    Eggxplanation.unsimplify mapping
+  let explanations := (← runEggRequest (← getMainGoal) eggRequest)
   for e in explanations do
     dbg_trace (s!"14) applying rewrite explanation {e}")
     dbg_trace (s!"14.5) current goal: {(<- getMainGoal).name} : {(<- inferType (Expr.mvar (<- getMainGoal)))}")

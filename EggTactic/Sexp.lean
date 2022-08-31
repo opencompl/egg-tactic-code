@@ -297,6 +297,12 @@ partial def simplifySExpsAux : List Sexp → VariableMapping → List Sexp →  
 def simplifySexps : List Sexp → List Sexp × VariableMapping
   | sexps => simplifySExpsAux sexps [] []
 
+def Sexp.unsimplify : Sexp →  VariableMapping → Sexp
+  | sexp, mapping => sexp.vars.foldl (init := sexp)
+    λ e var => match mapping.lookup var with
+      | none => e
+      | some subexp => replaceTerm (Sexp.atom var) subexp e
+
 def unsimplifySExps : List Sexp →  VariableMapping → List Sexp
   | sexps, mapping => sexps.map
     λ exp => exp.vars.foldl (init := exp)
