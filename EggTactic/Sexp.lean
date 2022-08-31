@@ -185,6 +185,154 @@ def parseSingleSexp (s: String): Except SexpError Sexp := do
   | [x] => .ok x
   | xs => .error (.notSingleSexp s xs)
 
+-- To simplify Sexps, we want to replace some subterms in an Sexp:
+-- Have to mark this as partial since the termination checker doesn't like
+-- these higher-order functions like map. See: https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/.E2.9C.94.20using.20higher-order.20functions.20on.20inductive.20types.3A.20termin.2E.2E.2E
+partial def replaceTerm (toReplace : Sexp) (replaceWith : Sexp) (atSexp : Sexp) : Sexp :=
+  if toReplace == atSexp then replaceWith
+  else match atSexp with
+  | .atom _ => atSexp
+  | .list sexps => sexps.map $ replaceTerm toReplace replaceWith
+
+-- The idea of this simplification is to do substitutions that replace a term,
+-- such that the replaced term never appears as a proper subterm elsewhere in
+-- the request, i.e. neither as the goal/starting point nor in any of the
+-- rewrites. Ideally maximal subterms with this property
+
+-- For this, we start by finding wether a subexpression is contained in an Sexp
+-- Yes, this is not optimal because of the checks, feel free to rewrite.
+
+-- Need this order of arguments (awkward for recursive call) for `.` notation
+partial def Sexp.containsSubexpr (mainExpr : Sexp) (subExpr : Sexp) : Bool :=
+  if subExpr == mainExpr then true
+  else match mainExpr with
+    | .atom _ => false
+    | .list sexps => sexps.any (containsSubexpr · subExpr)
+
+partial def Sexp.vars : Sexp → List String
+  | .atom s => [s]
+  | .list sexps => List.join $ sexps.map vars
+
+-- basically: sexp.variables ∩ vars ≠ ∅
+partial def Sexp.containsVars : Sexp → List String → Bool
+  | .atom s, vars => vars.contains s
+  | .list sexps, vars => sexps.any (containsVars · vars)
+
+-- We could maybe replace this with `Std.HashMap`, but this should do it for now.
+abbrev VariableMapping := List (String × Sexp)
+
+-- Some generic helper functions
+def _root_.List.revLookup? {α β : Type 0} [BEq β] : List (α × β) → β → Option α
+  | [], _ => none
+  | (a,b)::rest, b' => if b == b' then some a else rest.revLookup? b'
+
+def _root_.List.unique {α : Type 0} [BEq α] : List α → List α
+  | [] => []
+  | a :: as => if as.contains a then as.unique else (a :: as.unique)
+
+def _root_.List.unzip3 {α β γ : Type 0} : List (α × β × γ) → List α × List β × List γ
+  | abc => let (a,bc) := abc.unzip
+    (a,bc.unzip)
+
+def freshVar (vars : List String) : String := Id.run do
+  let mut idx := vars.length
+  let mut fresh := s!"v{idx}"
+  while vars.contains fresh do
+    idx := idx + 1
+    fresh := s!"v{idx}"
+  return fresh
+
+-- Here we simplify a single Sexp in an auxilariy function. We return the
+-- obtained mapping and also the rest of the expressions with the substitution
+-- in-place.
+partial def simplifySingleSexp : Sexp → List (List Sexp)
+  → Sexp × VariableMapping × List (List Sexp)
+  | exp@(.atom _), other => (exp, [], other)
+  -- We use the second argument, `other`, as some sort of stack for other
+  -- expressions that should be simplified as well.
+  | exp@(.list subexps), other =>
+    let restVars := List.join $ other.join.map Sexp.vars
+    -- try to substitute (both in the done and new
+    let fresh := freshVar (exp.vars ++ restVars)
+    let substituted := other.map
+      λ subExps => subExps.map
+        λ otherExp => replaceTerm exp (Sexp.atom fresh) otherExp
+    -- check if we broke something
+    let substitutedVars := substituted.map (λ subExps => subExps.map Sexp.vars)
+      |>.join.unique.join.unique -- collect all unique variables
+    if exp.vars.all λ v => !substitutedVars.contains v
+      -- we didn't? Then it's safe to substitute!
+      then
+        (Sexp.atom fresh, [(fresh, exp)], substituted)
+      else -- can't substitute, recurse on subexpressions
+      match subexps with
+        | [] => (exp, [], other) -- nothing to substitute
+        | headSubexp::tailSubexps => Id.run do
+          let mut mapping := []
+          let mut curSubexp := headSubexp
+          let mut curSubstituted := []::tailSubexps::other
+          let mut finished := false
+          while !finished do
+            let new := simplifySingleSexp curSubexp curSubstituted
+            mapping := mapping ++ new.2.1
+            let newDone::remainingSubexps::newOther := new.2.2
+              | panic! "lost some subexpressions along the way?!"
+            if let newSubexp::newTail := remainingSubexps then
+               curSubexp := newSubexp
+               curSubstituted := (newDone ++ [new.1])::newTail::newOther
+            else -- nothing remaning
+              finished := true
+              curSubstituted := (newDone ++ [new.1])::newOther
+          (Sexp.list curSubstituted.head!,mapping,curSubstituted.tail!)
+
+partial def simplifySExpsAux : List Sexp → VariableMapping → List Sexp →  List Sexp × VariableMapping
+  | [], mapping, done => (done, mapping)
+  | sexp::rest, mapping, done =>
+    let (newSexp,newMapping, substituted) := simplifySingleSexp sexp [done, rest]
+    match substituted with
+      | [newDone,newRest] =>
+        simplifySExpsAux newRest (mapping ++ newMapping) (newDone ++ [newSexp])
+      | _ => panic! ""
+
+def simplifySexps : List Sexp → List Sexp × VariableMapping
+  | sexps => simplifySExpsAux sexps [] []
+
+def unsimplifySExps : List Sexp →  VariableMapping → List Sexp
+  | sexps, mapping => sexps.map
+    λ exp => exp.vars.foldl (init := exp)
+      λ e var => match mapping.lookup var with
+        | none => e
+        | some subexp => replaceTerm (Sexp.atom var) subexp e
+
+
+def ab := parseSingleSexp "(a b)" |>.toOption |>.get!
+def aab := parseSingleSexp "(a (a b))" |>.toOption |>.get!
+def c := Sexp.atom "c"
+def a := Sexp.atom "a"
+#eval ab.toString
+#eval replaceTerm ab c ab |>.toString
+#eval replaceTerm ab c aab |>.toString
+#eval replaceTerm a c aab |>.toString
+#eval replaceTerm ab c aab |> replaceTerm c ab |>.toString
+
+def exp1 := parseSexpList "(a (a b)) (b (a b))" |>.toOption |>.get!
+def exp2 := parseSexpList "(c (a b)) ((a b) c)" |>.toOption |>.get!
+def exp3 := parseSexpList "(d ((a b) c)) (((a b) c) d)" |>.toOption |>.get!
+def simp1 := simplifySexps exp1
+def simp2 := simplifySexps exp2
+def simp3 := simplifySexps exp3
+
+#eval simp1.1 |>.map Sexp.toString
+#eval simp2.1 |>.map Sexp.toString
+#eval simp3.1 |>.map Sexp.toString
+
+#eval unsimplifySExps simp1.1 simp1.2 == exp1
+#eval unsimplifySExps simp2.1 simp2.2 == exp2
+#eval unsimplifySExps simp3.1 simp3.2 == exp3
+
+#eval aab.containsSubexpr a
+#eval aab.containsSubexpr ab
+#eval aab.containsSubexpr c
 
 #eval parseSexpList ""
 #eval parseSexpList "(a, b)"
