@@ -120,17 +120,17 @@ match e with
 partial def parseExprSexpr (s: Sexp): MetaM Expr := do
   match s with
   -- TODO: teach `egg` that empty sexp is okay
-  | Sexp.list _ [Sexp.atom "const", name, Sexp.atom "nolevels"] => do
+  | Sexp.list [Sexp.atom "const", name, Sexp.atom "nolevels"] => do
     return (Expr.const (← parseNameSexpr name) [])
     -- TODO: teach `egg` to not convert `(list (atom level))` to `(atom level)`
-  | Sexp.list _ [Sexp.atom "const", name, Sexp.list _ [Sexp.atom "levels", Sexp.atom "zero"] ] => do
+  | Sexp.list [Sexp.atom "const", name, Sexp.list [Sexp.atom "levels", Sexp.atom "zero"] ] => do
     return Expr.const (← parseNameSexpr name) [Level.zero]
-  | Sexp.list _ [Sexp.atom "const", name, Sexp.list _ [Sexp.atom "levels", Sexp.list _ levels] ] => do
+  | Sexp.list [Sexp.atom "const", name, Sexp.list [Sexp.atom "levels", Sexp.list levels] ] => do
     let levels ← levels.mapM parseLevelSexpr
     return Expr.const (← parseNameSexpr name) levels
-  | Sexp.list _ [Sexp.atom "fvar", n] => return mkFVar (FVarId.mk (← parseNameSexpr n))
-  | Sexp.list _ [Sexp.atom "litNat", n] => return mkNatLit n.toAtom!.toNat!
-  | Sexp.list _ [Sexp.atom "ap", l, r] => return mkApp (← parseExprSexpr l) (← parseExprSexpr r)
+  | Sexp.list [Sexp.atom "fvar", n] => return mkFVar (FVarId.mk (← parseNameSexpr n))
+  | Sexp.list [Sexp.atom "litNat", n] => return mkNatLit n.toAtom!.toNat!
+  | Sexp.list [Sexp.atom "ap", l, r] => return mkApp (← parseExprSexpr l) (← parseExprSexpr r)
   | _ => throwError s!"unimplemented parseExprSexpr '{s}': {s}"
 
 
@@ -247,7 +247,7 @@ def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do
 
 -- Find expressions of a given type in the local context
 def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit := do
-   withMVarContext g do
+   withMVarContext g do -- TODO: deprecated
     let lctx <- getLCtx
     for ldecl in lctx do
       let ldecl_type <- inferType ldecl.toExpr
@@ -500,6 +500,43 @@ def Eggxplanation.instantiateEqType
     dbg_trace "***rw: {rw}"
     return (rw, rwTy)
 
+def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
+  : Sexp × Sexp × List EggRewrite × VariableMapping :=
+  let rewriteSexps := List.join $  rewrites.map  λ rw => [rw.lhs,rw.rhs]
+  let (substituted, mapping) := simplifySexps $
+    lhs :: rhs :: rewriteSexps
+  Id.run do
+    let mut resRewrites := []
+    let mut remaining := substituted.tail!.tail!
+    for rw in rewrites do
+      if let lhs::rhs::remaining' := remaining then
+        resRewrites := resRewrites ++
+          [{ name := rw.name, lhs := lhs, rhs := rhs,
+             pretendMVars := rw.pretendMVars, rw := rw.rw,
+             unappliedRw := rw.unappliedRw, rwType := rw.rwType,
+             unappliedRwType := rw.unappliedRwType : EggRewrite}]
+        remaining := remaining'
+      else
+        panic! "error unpacking rewrites"
+    return (substituted.head!, substituted.tail!.head!,resRewrites,mapping)
+
+def unsimplifyRewrites (rewrites : List EggRewrite) (mapping : VariableMapping)
+  : List EggRewrite := Id.run do
+    let mut resRewrites := []
+    let rewriteSexps := List.join $  rewrites.map  λ rw => [rw.lhs,rw.rhs]
+    let mut remaining := unsimplifySExps rewriteSexps mapping
+    for rw in rewrites do
+      if let lhs::rhs::remaining' := remaining then
+        resRewrites := resRewrites ++
+          [{ name := rw.name, lhs := lhs, rhs := rhs,
+             pretendMVars := rw.pretendMVars, rw := rw.rw,
+             unappliedRw := rw.unappliedRw, rwType := rw.rwType,
+             unappliedRwType := rw.unappliedRwType : EggRewrite}]
+        remaining := remaining'
+      else
+        panic! "error unpacking rewrites"
+    return resRewrites
+
 -- parse the response, given the response as a string
 def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxplanation) := do
     let outJson : Json <- match Json.parse responseString with
@@ -524,6 +561,9 @@ def parseEggResponse (goal: MVarId) (responseString: String): MetaM (List Eggxpl
       dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
       return explanation
 
+def Eggxplanation.unsimplify (mapping : VariableMapping) (explanation : Eggxplanation)
+  : Eggxplanation := explanation -- TODO: implement this properly?
+
 -- High level wrapped aroung runEggRequestRaw that is well-typed, and returns the
 -- list of explanations
 def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanation) :=
@@ -547,19 +587,21 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
   dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
 
   let (_, goalLhs, goalRhs) ← match (← matchEq? (<- getMainTarget)) with
-      | .none => throwError "Egg: target not equality: {<- getMainTarget}"
-      | .some eq => pure eq
+    | .none => throwError "Egg: target not equality: {<- getMainTarget}"
+    | .some eq => pure eq
 
 
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
-
+  let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
+    (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
   let eggRequest := {
-      targetLhs := (← exprToSexp goalLhs).toString,
-      targetRhs := (← exprToSexp goalRhs).toString,
-      rewrites := rewrites
-      : EggRequest
+    targetLhs := simplifiedLhs.toString,
+    targetRhs := simplifiedRhs.toString,
+    rewrites := simplifiedRewrites
+    : EggRequest
   }
-  let explanations ← runEggRequest (<- getMainGoal) eggRequest
+  let explanations := (← runEggRequest (← getMainGoal) eggRequest).map $
+    Eggxplanation.unsimplify mapping
   for e in explanations do
     dbg_trace (s!"14) applying rewrite explanation {e}")
     dbg_trace (s!"14.5) current goal: {(<- getMainGoal).name} : {(<- inferType (Expr.mvar (<- getMainGoal)))}")
