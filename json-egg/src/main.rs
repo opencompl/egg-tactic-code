@@ -289,6 +289,15 @@ fn handle_request(req: Request) -> Response {
             .with_iter_limit(9999)
             .with_egraph(graph)
             .with_explanations_enabled()
+            .with_hook(move |runner| {
+                if runner.egraph.find(lhs_id) == runner.egraph.find(rhs_id) {
+                    // panic!("same equivalence class".to_string());
+                    Result::Err("now in same equivalence class".to_string())
+                } else {
+                    Result::Ok(())
+                }
+
+            })
             .run(&new_rewrites);
 
             // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
