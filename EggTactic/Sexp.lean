@@ -213,6 +213,20 @@ partial def Sexp.vars : Sexp → List String
   | .atom s => [s]
   | .list sexps => List.join $ sexps.map vars
 
+-- We only consider fvars
+partial def Sexp.fvars : Sexp → List Sexp
+  | .atom _ => []
+  | fvar@(.list ("fvar"::_)) => [fvar]
+  | .list sexps => List.join $ sexps.map fvars
+
+partial def Sexp.consts : Sexp → List Sexp
+  | .atom _ => []
+  | c@(.list ("const"::_)) => [c]
+  | .list sexps => List.join $ sexps.map consts
+
+def Sexp.selectStr : Sexp → List String := Sexp.vars
+  --λ e => e.fvars.map Sexp.toString ++ e.consts.map Sexp.toString
+
 -- basically: sexp.variables ∩ vars ≠ ∅
 partial def Sexp.containsVars : Sexp → List String → Bool
   | .atom s, vars => vars.contains s
@@ -245,22 +259,25 @@ def freshVar (vars : List String) : String := Id.run do
 -- Here we simplify a single Sexp in an auxilariy function. We return the
 -- obtained mapping and also the rest of the expressions with the substitution
 -- in-place.
-partial def simplifySingleSexp : Sexp → List (List Sexp)
+partial def simplifySingleSexp : (Sexp → List String) → Sexp → List (List Sexp)
   → Sexp × VariableMapping × List (List Sexp)
-  | exp@(.atom _), other => (exp, [], other)
+  -- If we actually get to atoms there's nothing left to simplify, so trivial.
+  | _, exp@(.atom _), other => (exp, [], other)
   -- We use the second argument, `other`, as some sort of stack for other
   -- expressions that should be simplified as well.
-  | exp@(.list subexps), other =>
-    let restVars := List.join $ other.join.map Sexp.vars
+  | varfun, exp@(.list subexps), other =>
+    let restVars := List.join $ other.join.map varfun
     -- try to substitute (both in the done and new
     let fresh := freshVar (exp.vars ++ restVars)
     let substituted := other.map
       λ subExps => subExps.map
         λ otherExp => replaceTerm exp (Sexp.atom fresh) otherExp
     -- check if we broke something
-    let substitutedVars := substituted.map (λ subExps => subExps.map Sexp.vars)
+    let substitutedVars := substituted.map (λ subExps => subExps.map varfun)
       |>.join.unique.join.unique -- collect all unique variables
-    if exp.vars.all λ v => !substitutedVars.contains v
+    --dbg_trace (s!"{(varfun exp)}.all λ v => !{substitutedVars}.contains v ="
+    --  ++ s!"{(varfun exp).all λ v => !substitutedVars.contains v}")
+    if (varfun exp).all λ v => !substitutedVars.contains v
       -- we didn't? Then it's safe to substitute!
       then
         (Sexp.atom fresh, [(fresh, exp)], substituted)
@@ -273,7 +290,7 @@ partial def simplifySingleSexp : Sexp → List (List Sexp)
           let mut curSubstituted := []::tailSubexps::other
           let mut finished := false
           while !finished do
-            let new := simplifySingleSexp curSubexp curSubstituted
+            let new := simplifySingleSexp varfun curSubexp curSubstituted
             mapping := mapping ++ new.2.1
             let newDone::remainingSubexps::newOther := new.2.2
               | panic! "lost some subexpressions along the way?!"
@@ -285,17 +302,35 @@ partial def simplifySingleSexp : Sexp → List (List Sexp)
               curSubstituted := (newDone ++ [new.1])::newOther
           (Sexp.list curSubstituted.head!,mapping,curSubstituted.tail!)
 
-partial def simplifySExpsAux : List Sexp → VariableMapping → List Sexp →  List Sexp × VariableMapping
-  | [], mapping, done => (done, mapping)
-  | sexp::rest, mapping, done =>
-    let (newSexp,newMapping, substituted) := simplifySingleSexp sexp [done, rest]
+partial def simplifySExpsAux : (Sexp → List String) → List Sexp → VariableMapping → List Sexp →  List Sexp × VariableMapping
+  | _, [], mapping, done => (done, mapping)
+  | varfun, sexp::rest, mapping, done =>
+    let (newSexp,newMapping, substituted) := simplifySingleSexp varfun sexp [done, rest]
     match substituted with
       | [newDone,newRest] =>
-        simplifySExpsAux newRest (mapping ++ newMapping) (newDone ++ [newSexp])
+        simplifySExpsAux varfun newRest (mapping ++ newMapping) (newDone ++ [newSexp])
       | _ => panic! ""
 
 def simplifySexps : List Sexp → List Sexp × VariableMapping
-  | sexps => simplifySExpsAux sexps [] []
+  | sexps =>
+    let fvars := sexps.map (λ exp => exp.fvars.unique) |>.join.unique
+    let consts := sexps.map (λ exp => exp.consts.unique) |>.join.unique
+    let initialSubst := Id.run do
+      let mut allVars := sexps.map (λ exp => exp.vars.unique) |>.join.unique
+      let mut mapping := []
+      let mut exps := sexps
+      for fvar in fvars do
+        let vname := freshVar allVars
+        mapping := (vname,fvar)::mapping
+        allVars := vname::allVars
+        exps := exps.map λ exp => replaceTerm fvar (Sexp.atom vname) exp
+      for c in consts do
+        let vname := freshVar allVars
+        mapping := (vname,c)::mapping
+        allVars := vname::allVars
+        exps := exps.map λ exp => replaceTerm c (Sexp.atom vname) exp
+      return (exps, mapping)
+  simplifySExpsAux Sexp.selectStr initialSubst.1 initialSubst.2 []
 
 def Sexp.unsimplify : Sexp →  VariableMapping → Sexp
   | sexp, mapping => sexp.vars.foldl (init := sexp)
@@ -321,6 +356,12 @@ def a := Sexp.atom "a"
 #eval replaceTerm a c aab |>.toString
 #eval replaceTerm ab c aab |> replaceTerm c ab |>.toString
 
+def realexample := parseSexpList "(ap (ap (ap (ap (ap (ap (const (str (str anonymous HSub) hSub) (levels (zero zero zero))) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (ap (ap (const (str anonymous instHSub) (levels (zero))) (const (str anonymous Int) nolevels)) (const (str (str anonymous Int) instSubInt) nolevels))) (fvar (num (str anonymous _uniq) 117))) (fvar (num (str anonymous _uniq) 117))) (ap (ap (ap (ap (ap (ap (const (str (str anonymous HSub) hSub) (levels (zero zero zero))) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (ap (ap (const (str anonymous instHSub) (levels (zero))) (const (str anonymous Int) nolevels)) (const (str (str anonymous Int) instSubInt) nolevels))) (fvar (num (str anonymous _uniq) 118))) (fvar (num (str anonymous _uniq) 118))) (ap (ap (ap (ap (ap (ap (const (str (str anonymous HSub) hSub) (levels (zero zero zero))) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (const (str anonymous Int) nolevels)) (ap (ap (const (str anonymous instHSub) (levels (zero))) (const (str anonymous Int) nolevels)) (const (str (str anonymous Int) instSubInt) nolevels))) ?_uniq.121) ?_uniq.121) (ap (ap (ap (const (str (str anonymous OfNat) ofNat) (levels (zero))) (const (str anonymous Int) nolevels)) (litNat 0)) (ap (const (str (str anonymous Int) instOfNatInt) nolevels) (litNat 0)))" |>.toOption |>.get!
+#eval realexample.map Sexp.selectStr
+def realexampleSimplified := simplifySexps realexample
+#eval realexampleSimplified.1.toString
+#eval realexampleSimplified.2.map λ (s,sexp) => (s,sexp.toString)
+#eval realexampleSimplified.1.map (Sexp.unsimplify · realexampleSimplified.2) |>.zip realexample |>.map λ (a,b) => a == b
 def exp1 := parseSexpList "(a (a b)) (b (a b))" |>.toOption |>.get!
 def exp2 := parseSexpList "(c (a b)) ((a b) c)" |>.toOption |>.get!
 def exp3 := parseSexpList "(d ((a b) c)) (((a b) c) d)" |>.toOption |>.get!

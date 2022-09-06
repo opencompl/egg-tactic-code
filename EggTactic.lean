@@ -153,7 +153,7 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   let mvarid2expr ← mvarsJson.foldM (init := []) (fun out mvaridStr expr => do {
     let expr ← exceptToMetaM <| expr.getStr?
     let expr ← exceptToMetaM <| parseSingleSexp expr
-    let expr ← parseExprSexpr expr
+    let expr ← parseExprSexpr $ expr.unsimplify mapping
     let mvaridSexp ← exceptToMetaM <| parseSingleSexp mvaridStr
     return (mvaridSexp, expr) :: out
   })
@@ -572,13 +572,12 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
     | .none => throwError "Egg: target not equality: {<- getMainTarget}"
     | .some eq => pure eq
 
-
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
+  dbg_trace "simplifying {(← exprToSexp goalLhs)} {(← exprToSexp goalRhs)} {rewrites}"
+
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
     (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
-  dbg_trace "simplifying {(← exprToSexp goalLhs)} to {simplifiedLhs}"
-  dbg_trace "simplifying {(← exprToSexp goalRhs)} to {simplifiedRhs}"
-  dbg_trace "simplifying {rewrites} to {simplifiedRewrites}"
+  dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   let eggRequest := {
     targetLhs := simplifiedLhs.toString,
     targetRhs := simplifiedRhs.toString,
