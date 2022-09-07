@@ -1,1 +1,27 @@
-{"request":"perform-rewrite","target-lhs":"(ap v7 (ap v7 v6))","target-rhs":"v6","rewrites":[{"name":"3","lhs":"v8","rhs":"(ap (ap v9 v6) (ap v7 v6))"},{"name":"2","lhs":"?_uniq.562","rhs":"(ap (ap v9 ?_uniq.562) v8)"},{"name":"1","lhs":"(ap (ap v9 (ap v7 ?_uniq.561)) ?_uniq.561)","rhs":"v8"},{"name":"0","lhs":"(ap (ap v9 ?_uniq.558) (ap (ap v9 ?_uniq.559) ?_uniq.560))","rhs":"(ap (ap v9 (ap (ap v9 ?_uniq.558) ?_uniq.559)) ?_uniq.560)"}]}
+{
+    "request": "perform-rewrite",
+    "target-lhs": "(ap v7 (ap v7 v6))",
+    "target-rhs": "v6",
+    "rewrites": [
+        {
+            "name": "3",
+            "lhs": "v8",
+            "rhs": "(ap (ap v9 v6) (ap v7 v6))"
+        },
+        {
+            "name": "2",
+            "lhs": "?_uniq.562",
+            "rhs": "(ap (ap v9 ?_uniq.562) v8)"
+        },
+        {
+            "name": "1",
+            "lhs": "(ap (ap v9 (ap v7 ?_uniq.561)) ?_uniq.561)",
+            "rhs": "v8"
+        },
+        {
+            "name": "0",
+            "lhs": "(ap (ap v9 ?_uniq.558) (ap (ap v9 ?_uniq.559) ?_uniq.560))",
+            "rhs": "(ap (ap v9 (ap (ap v9 ?_uniq.558) ?_uniq.559)) ?_uniq.560)"
+        }
+    ]
+}

@@ -269,7 +269,6 @@ def simplifySexps : List Sexp → List Sexp × VariableMapping
         allVars := vname::allVars
         exps := exps.map λ exp => replaceTerm c (Sexp.atom vname) exp
       return (exps, mapping)
-  --simplifySExpsAux Sexp.selectStr initialSubst.1 initialSubst.2 []
 
 def Sexp.unsimplify : Sexp →  VariableMapping → Sexp
   | sexp, mapping => sexp.vars.foldl (init := sexp)
@@ -296,7 +295,7 @@ def a := Sexp.atom "a"
 #eval replaceTerm ab c aab |> replaceTerm c ab |>.toString
 
 
-def realexample := parseSexpList "(ap (fvar (num (str anonymous _uniq) 547)) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) (fvar (num (str anonymous _uniq) 550)) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (fvar (num (str anonymous _uniq) 550))) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) ?_uniq.562 (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.562) (fvar (num (str anonymous _uniq) 549))) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (fvar (num (str anonymous _uniq) 547)) ?_uniq.561)) ?_uniq.561) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.559) ?_uniq.560)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) ?_uniq.559)) ?_uniq.560)"
+def realexample := parseSexpList "(ap (fvar (num (str anonymous _uniq) 547)) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) (fvar (num (str anonymous _uniq) 550)) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (fvar (num (str anonymous _uniq) 550))) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) ?_uniq.562 (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.562) (fvar (num (str anonymous _uniq) 549))) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (fvar (num (str anonymous _uniq) 547)) ?_uniq.561)) ?_uniq.561) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.559) ?_uniq.560)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) ?_uniq.559)) ?_uniq.560)" |>.toOption.get!
 def realexampleSimplified := simplifySexps realexample
 #eval realexampleSimplified.1.toString
 #eval realexampleSimplified.2.map λ (s,sexp) => (s,sexp.toString)

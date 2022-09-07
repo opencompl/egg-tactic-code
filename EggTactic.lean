@@ -459,10 +459,9 @@ def Eggxplanation.instantiateEqType
     dbg_trace "*** eq                       : {eq}"
     let mut args : Array Expr := #[]
     for mvar in eggrw.pretendMVars do
-      let needle := mvarIdToSexp mvar
-      match expl.mvars.find? (fun mvarExpr => mvarExpr.1 == needle) with
-      | .some (_, val) =>
-          args := args.push (val)
+      match expl.mvars.lookup (mvarIdToSexp mvar) with
+      | .some val =>
+          args := args.push val
       | .none => throwError "unable to find value for mvar: {mvar}"
 
     -- TODO: Is there a better way to instantiating universal quantifiers?
