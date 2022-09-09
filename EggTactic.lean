@@ -50,6 +50,7 @@ structure Eggxplanation where
   rule: String -- name of the rewrite rule
   result: Expr -- result of the rewrite
   source: Expr -- source of the rewrite
+  position : Nat
   mvars: List (Sexp × Expr) -- metavariables in the rewrite rule and its assignment
 
 instance : ToString Eggxplanation where
@@ -166,11 +167,15 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   let source ← exceptToMetaM <| parseSingleSexp source
   let source ← parseExprSexpr $ source.unsimplify mapping
 
+  let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getStr?
+  let position := position.toNat!
+
   return { direction := direction
           , rule := rewrite -- TODO: make consistent in terminology
           , mvars := mvarid2expr
           , result := result
           , source := source
+          , position := position
           : Eggxplanation }
 
 -- | Actually do the IO. This incurs an `unsafe`.
@@ -578,6 +583,7 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
     (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
+  dbg_trace "simplification mapping {mapping}"
   let eggRequest := {
     targetLhs := simplifiedLhs.toString,
     targetRhs := simplifiedRhs.toString,
@@ -621,12 +627,15 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
     -- let isEq ← isDefEq eggLhs mainLhs
     -- dbg_trace (s!"16) isEq:          : {isEq}")
     dbg_trace (s!"16) rewrite        : {eggxplanationRw}")
-    dbg_trace (s!"16) rewrite type   : {← inferType eggxplanationRw}")
+    let rewriteType ← inferType eggxplanationRw 
+    dbg_trace (s!"16) rewrite type   : {rewriteType}")
+    --dbg_trace (s!"16) rewrite type   : {← inferType eggxplanationRw}")
     -- TODO: maybe revive the code that passes the direction (and the burden)
     -- to `rewriteResult` (or stop using rewrite altogether)
     let rewriteResult <- (<- getMainGoal).rewrite
         (<- getMainTarget)
         eggxplanationRw
+        (occs := Occurrences.pos [e.position])
 
     dbg_trace (f!"rewritten to: {rewriteResult.eNew}")
     let mvarId' ← replaceTargetEq (← getMainGoal) rewriteResult.eNew rewriteResult.eqProof

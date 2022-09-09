@@ -67,6 +67,7 @@ enum Request {
 pub struct LeanRewriteInfo {
     source: String, // the input expression before the rewrite
     rewrite: String, // name of the rewrite
+    position : u32,
     mvars: HashMap<String, String>, // metavariable values.
     direction: String, // direction of the rewrite
     result: String // the output/result expression after the rewrite
@@ -84,6 +85,30 @@ enum Response {
     },
     Error { error: String }
 }
+
+#[derive(Serialize,Debug,PartialEq, Clone, Copy)]
+enum Direction {
+    Forward, Backward
+}
+
+// The invariant of a FlatTerm ensures there is at most one term
+// with a forward/backward rule. Thus, the case where it is_some
+// means this is the matching subterm.
+fn get_rewrite_pattern_direction(t : &FlatTerm) -> Option<(Symbol,Direction)> {
+    if let Some(rule) = t.forward_rule{
+        return Some((rule, Direction::Forward ));
+    } else if let Some(rule) = t.backward_rule{
+        return Some((rule, Direction::Backward ));
+    } else {
+        for child in t.children.iter(){
+            if let Some(res) = get_rewrite_pattern_direction(child){
+                return Some(res);
+            }
+        }
+    }
+    return None;
+}
+
 
 macro_rules! respond_error {
     ($e:expr) => {
@@ -108,7 +133,7 @@ fn parse_rewrite(rw: &RewriteStr) -> Result<Rewrite, String> {
 
 fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
     let op = Sexp::String(t.node.to_string());
-    let mut expr = if t.node.is_leaf() {
+    let expr = if t.node.is_leaf() {
         op
     } else {
         let mut vec = vec![op];
@@ -122,6 +147,9 @@ fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
 }
 
 
+fn compare_flat_terms(first : &FlatTerm, snd : &FlatTerm) -> bool{
+  flat_term_to_raw_sexp(&first) == flat_term_to_raw_sexp(&snd)
+}
 
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
@@ -168,9 +196,10 @@ fn flat_term_binding<'a>(t: &'a FlatTerm, lhs: &PatternAst, rhs: &PatternAst) ->
 }
 
 // if the rewrite is just patterns, then it can check it
-fn check_rewrite<'a>(
+fn build_rewrite_info<'a>(
     current: &'a FlatTerm,
     next: &'a FlatTerm,
+    idx : u32,
     rewrite: &Rewrite,
     is_forward: bool) -> LeanRewriteInfo {
     if let Some(lhs) = rewrite.searcher.get_pattern_ast() {
@@ -183,6 +212,7 @@ fn check_rewrite<'a>(
             let mut info = LeanRewriteInfo {
                 rewrite: rewrite.name.to_string(),
                 mvars: HashMap::new(),
+                position : idx,
                 direction: if is_forward { String::from("fwd") } else { String::from("bwd") },
                 source: flat_term_to_raw_sexp(current).to_string(),
                 result: flat_term_to_raw_sexp(next).to_string()
@@ -197,40 +227,98 @@ fn check_rewrite<'a>(
 }
 
 
+fn check_lhs(
+    lhs_node: &SymbolLang,
+    lhs_rw: &[ENodeOrVar]
+) -> bool {
+    match &lhs_rw[lhs_rw.len() - 1] {
+        ENodeOrVar::Var(var) => {
+            panic!("unimplemented case: Var")
+        }
+        ENodeOrVar::ENode(node) => {
+            // The node must match the rewrite or the proof is invalid.
+
+            println!("checking {}({}).matches({})({})? {}", node, node.len(), lhs_node, lhs_node.len(), node.matches(lhs_node));
+            return node.matches(lhs_node);
+        }
+    }
+}
+
+pub fn check_rewrite<'a>(
+    current: &'a FlatTerm,
+    next: &'a FlatTerm,
+    rewrite: &Rewrite,
+) -> bool {
+    if let Some(lhs) = rewrite.searcher.get_pattern_ast() {
+        if let Some(rhs) = rewrite.applier.get_pattern_ast() {
+            let rewritten = current.rewrite(lhs, rhs);
+            if &rewritten != next {
+                return false;
+            }
+        }
+    }
+    true
+}
 /*
  Check if at the right point on the AST, if not,
- recursively call this function on children. 
+ recursively call this function on children.
  Note that this is necessary because FlatTerm represents
  the full AST annotated with the rewrite information at the
  point of the subtree that is rewritten.
 */
-fn check_rewrite_at
+fn build_rewrite_info_at
     (current: &FlatTerm,
     next: &FlatTerm,
     table: &HashMap<Symbol, &Rewrite>,
-    is_forward: bool,
-    out: &mut Vec<LeanRewriteInfo>) {
-    if is_forward && next.forward_rule.is_some() {
-        let rule_name = next.forward_rule.as_ref().unwrap();
-        if let Some(rule) = table.get(rule_name) {
-            out.push(check_rewrite(current, next, rule, is_forward));
-        } else {
-            // give up when the rule is not provided
-        }
-    } else if !is_forward && next.backward_rule.is_some() {
-        let rule_name = next.backward_rule.as_ref().unwrap();
-        if let Some(rule) = table.get(rule_name) {
-            out.push(check_rewrite(next, current, rule, is_forward));
-        } else {
-            // give up when the rule is not provided
-
-        }
-    } else {
-        for (left, right) in current.children.iter().zip(next.children.iter()) {
-            check_rewrite_at(left, right, table, is_forward, out);
+    rw : &Rewrite,
+    idx : u32,
+    direction: Direction,
+    out: &mut Vec<LeanRewriteInfo>) -> u32 {
+    let mut cur_idx = idx;
+    // this is the term
+        if next.forward_rule.is_some() {
+            println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
+            out.push(build_rewrite_info(current, next, cur_idx + 1, rw, direction == Direction::Forward));
+            return cur_idx + 1;
+        } else if next.backward_rule.is_some() {
+            println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
+            out.push(build_rewrite_info(next, current, cur_idx + 1, rw, direction == Direction::Forward));
+            return cur_idx + 1;
+        } else{
+            if let Some(lhs) = rw.searcher.get_pattern_ast(){
+                if direction == Direction::Forward{
+                    // check backward to see if the LHS was a match
+                    // TODO: this check is wrong/incomplete right now: 
+                    // it's not taking the (m)vars into account.
+                    // We probably need to actually traverse this tree twice, once to extract
+                    // the variable bindings/lhs and a second time to build the info...
+                    if check_lhs(&current.node,lhs.as_ref()){
+                        cur_idx = cur_idx + 1;
+                        println!("matched {} & incremented to {}",current.node, cur_idx);
+                    }
+                    else{
+                        println!("skipped {}, idx stays at: {}",current.node, cur_idx);
+                    }
+                } else{
+                    // check backward to see if the LHS was a match
+                    if check_lhs(&next.node,lhs.as_ref()){
+                        cur_idx = cur_idx + 1;
+                        println!("matched {} & incremented to {}",current.node, cur_idx);
+                    }
+                    else{
+                        println!("skipped {}, idx stays at: {}",current.node, cur_idx);
+                    }
+                }
+            }
+            else{
+                panic!("cannot get patten from rewrite");
+            }
+            for (left, right) in current.children.iter().zip(next.children.iter()) {
+                cur_idx = build_rewrite_info_at(left, right, table, rw, cur_idx, direction, out);
+            }
+            return cur_idx;
         }
     }
-}
 
 
 fn make_rule_table<'a>(
@@ -243,7 +331,7 @@ fn make_rule_table<'a>(
     table
 }
 
-pub fn check_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> Vec<LeanRewriteInfo> {
+pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> Vec<LeanRewriteInfo> {
     let rule_table = make_rule_table(&rules);
     assert!(!flat_explanation[0].has_rewrite_forward());
     assert!(!flat_explanation[0].has_rewrite_backward());
@@ -253,15 +341,13 @@ pub fn check_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
         let current = &flat_explanation[i];
         let next = &flat_explanation[i + 1];
 
-        let has_forward = next.has_rewrite_forward();
-        let has_backward = next.has_rewrite_backward();
-        assert!(has_forward ^ has_backward);
+        if let Some((rule_name, direction)) =  get_rewrite_pattern_direction(next){
 
-        if has_forward {
-            check_rewrite_at(current, next, &rule_table, true, &mut explanations);
-        } else {
-            check_rewrite_at(current, next, &rule_table, false, &mut explanations);
+          if let Some(rule) = rule_table.get(&rule_name) {
+            println!("processing rule {}", rule_name);
+            build_rewrite_info_at(current, next, &rule_table, rule, 0, direction, &mut explanations);
         }
+    }
     }
     return explanations;
 }
@@ -284,9 +370,9 @@ fn handle_request(req: Request) -> Response {
             let rhs_id = graph.add_expr(&target_rhs_expr);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
-            .with_node_limit(5000)
+            .with_node_limit(50000)
             .with_time_limit(Duration::from_secs(60 * 60))
-            .with_iter_limit(9999)
+            .with_iter_limit(99999)
             .with_egraph(graph)
             .with_explanations_enabled()
             .with_hook(move |runner| {
@@ -300,6 +386,7 @@ fn handle_request(req: Request) -> Response {
             })
             .run(&new_rewrites);
 
+            //runner.egraph.dot().to_pdf("egraph_dump.pdf").unwrap();
             // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
@@ -311,7 +398,7 @@ fn handle_request(req: Request) -> Response {
                 // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
-                let explanation = check_proof(new_rewrites, flat_explanation);
+                let explanation = build_proof(new_rewrites, flat_explanation);
                 Response::PerformRewrite { success: true, explanation: explanation }
             } else {
                 Response::Error {error: format!("no rewrite found! reason: {:?}", runner.stop_reason) }
