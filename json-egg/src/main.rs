@@ -59,6 +59,7 @@ enum Request {
         rewrites: Vec<RewriteStr>,
         target_lhs: String,
         target_rhs: String,
+        timeout : u64
     }
 }
 
@@ -369,7 +370,7 @@ pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
 
 fn handle_request(req: Request) -> Response {
     match req {
-        Request::PerformRewrite { rewrites, target_lhs, target_rhs } => {
+        Request::PerformRewrite { rewrites, target_lhs, target_rhs , timeout} => {
 
             let mut new_rewrites = vec![];
             for rw in rewrites {
@@ -385,8 +386,8 @@ fn handle_request(req: Request) -> Response {
             let rhs_id = graph.add_expr(&target_rhs_expr);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
-            .with_node_limit(50000)
-            .with_time_limit(Duration::from_secs(60 * 60))
+            .with_node_limit(99999)
+            .with_time_limit(Duration::from_secs(timeout))
             .with_iter_limit(99999)
             .with_egraph(graph)
             .with_explanations_enabled()

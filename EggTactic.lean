@@ -210,13 +210,15 @@ structure EggRequest where
   targetRhs: String
   varMapping : VariableMapping
   rewrites: List EggRewrite
+  time : Nat
 
 def EggRequest.toJson (e: EggRequest): String :=
   "{"
   ++ surroundQuotes "request"  ++  ":" ++ surroundQuotes "perform-rewrite" ++ ","
   ++ surroundQuotes "target-lhs"  ++  ":" ++ surroundQuotes (e.targetLhs) ++ ","
   ++ surroundQuotes "target-rhs"  ++  ":" ++ surroundQuotes (e.targetRhs) ++ ","
-  ++ surroundQuotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]"
+  ++ surroundQuotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]" ++ ","
+  ++ surroundQuotes "timeout" ++ ":" ++ toString e.time
   ++ "}"
 
 def Lean.Json.getStr! (j: Json): String :=
@@ -406,7 +408,8 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   if ty.universallyQuantifiedEq? then
     if ty.isForall then do
-        addForallExplodedEquality goal rw ty
+        -- TODO: add this only when metavars disallow to pass without
+        --addForallExplodedEquality goal rw ty
         addForallMVarEquality rw ty
     else if ty.isEq then do
         addBareEquality rw rw ty ty #[]
@@ -572,9 +575,13 @@ def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :
     s!":= {decl.toExpr} : {← inferType decl.toExpr}")
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
 
+declare_syntax_cat time_limit
+syntax "(" "timeLimit" ":=" num ")" : time_limit
+def Lean.TSyntax.getTimeLimit : TSyntax `time_limit → Nat
+  | `(time_limit| (timeLimit := $n)) => n.getNat
+  | _ => panic! "unknown timeLimit syntax"
 
-
-elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
+elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainContext do
   dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
 
   let (_, goalLhs, goalRhs) ← match (← matchEq? (<- getMainTarget)) with
@@ -588,10 +595,14 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" : tactic => withMainContext do
     (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   dbg_trace "simplification mapping {mapping}"
+  let time : Nat := match t with
+    | none => 3
+    | some tl => tl.getTimeLimit
   let eggRequest := {
     targetLhs := simplifiedLhs.toString,
     targetRhs := simplifiedRhs.toString,
-    rewrites := simplifiedRewrites
+    rewrites := simplifiedRewrites,
+    time := time,
     varMapping := mapping
     : EggRequest
   }
