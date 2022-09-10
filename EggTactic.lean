@@ -406,10 +406,13 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   if ty.universallyQuantifiedEq? then
     if ty.isForall then do
-        -- addForallExplodedEquality goal rw ty
+        addForallExplodedEquality goal rw ty
         addForallMVarEquality rw ty
+        dbg_trace "added forall mvar eq"
     else if ty.isEq then do
         addBareEquality rw rw ty ty #[]
+  else
+    dbg_trace "not a univ. quantified eq: {rw} : {ty}"
 
 
 -- Add all equalities from the local context
