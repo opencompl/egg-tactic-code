@@ -167,8 +167,7 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   let source ← exceptToMetaM <| parseSingleSexp source
   let source ← parseExprSexpr $ source.unsimplify mapping
 
-  let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getStr?
-  let position := position.toNat!
+  let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getNat?
 
   return { direction := direction
           , rule := rewrite -- TODO: make consistent in terminology

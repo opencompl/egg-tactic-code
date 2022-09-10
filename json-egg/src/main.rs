@@ -266,47 +266,62 @@ pub fn check_rewrite<'a>(
  the full AST annotated with the rewrite information at the
  point of the subtree that is rewritten.
 */
+fn get_rw_lhs
+    (current: &FlatTerm,
+    next: &FlatTerm,
+    ) -> Option<Sexp> {
+    if next.forward_rule.is_some() {
+        return Some(flat_term_to_raw_sexp(&current));
+    } else if next.backward_rule.is_some() {
+        return Some(flat_term_to_raw_sexp(&next));
+    } else{
+        for (left, right) in current.children.iter().zip(next.children.iter()) {
+            let res = get_rw_lhs(left, right);
+            if res.is_some(){
+                return res;
+            }
+        }
+        return None;
+    }
+}
+
 fn build_rewrite_info_at
     (current: &FlatTerm,
     next: &FlatTerm,
-    table: &HashMap<Symbol, &Rewrite>,
     rw : &Rewrite,
+    rw_lhs : &Sexp,
     idx : u32,
     direction: Direction,
     out: &mut Vec<LeanRewriteInfo>) -> u32 {
     let mut cur_idx = idx;
     // this is the term
         if next.forward_rule.is_some() {
-            println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
+            //println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
             out.push(build_rewrite_info(current, next, cur_idx + 1, rw, direction == Direction::Forward));
             return cur_idx + 1;
         } else if next.backward_rule.is_some() {
-            println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
+            //println!("at rewrite site: {}, incrementing to {}", current.node, cur_idx + 1);
             out.push(build_rewrite_info(next, current, cur_idx + 1, rw, direction == Direction::Forward));
             return cur_idx + 1;
         } else{
             if let Some(lhs) = rw.searcher.get_pattern_ast(){
                 if direction == Direction::Forward{
                     // check backward to see if the LHS was a match
-                    // TODO: this check is wrong/incomplete right now: 
-                    // it's not taking the (m)vars into account.
-                    // We probably need to actually traverse this tree twice, once to extract
-                    // the variable bindings/lhs and a second time to build the info...
-                    if check_lhs(&current.node,lhs.as_ref()){
+                    if flat_term_to_raw_sexp(current) == *rw_lhs{
                         cur_idx = cur_idx + 1;
-                        println!("matched {} & incremented to {}",current.node, cur_idx);
+                        //println!("matched {} & incremented to {}",current.node, cur_idx);
                     }
                     else{
-                        println!("skipped {}, idx stays at: {}",current.node, cur_idx);
+                        //println!("skipped {}, idx stays at: {}",current.node, cur_idx);
                     }
                 } else{
                     // check backward to see if the LHS was a match
-                    if check_lhs(&next.node,lhs.as_ref()){
+                    if flat_term_to_raw_sexp(next) == *rw_lhs{
                         cur_idx = cur_idx + 1;
-                        println!("matched {} & incremented to {}",current.node, cur_idx);
+                        //println!("matched {} & incremented to {}",current.node, cur_idx);
                     }
                     else{
-                        println!("skipped {}, idx stays at: {}",current.node, cur_idx);
+                        //println!("skipped {}, idx stays at: {}",current.node, cur_idx);
                     }
                 }
             }
@@ -314,12 +329,11 @@ fn build_rewrite_info_at
                 panic!("cannot get patten from rewrite");
             }
             for (left, right) in current.children.iter().zip(next.children.iter()) {
-                cur_idx = build_rewrite_info_at(left, right, table, rw, cur_idx, direction, out);
+                cur_idx = build_rewrite_info_at(left, right, rw, rw_lhs, cur_idx, direction, out);
             }
             return cur_idx;
         }
     }
-
 
 fn make_rule_table<'a>(
     rules: &'a Vec<Rewrite>
@@ -344,8 +358,9 @@ pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
         if let Some((rule_name, direction)) =  get_rewrite_pattern_direction(next){
 
           if let Some(rule) = rule_table.get(&rule_name) {
-            println!("processing rule {}", rule_name);
-            build_rewrite_info_at(current, next, &rule_table, rule, 0, direction, &mut explanations);
+            if let Some(rw_lhs) = get_rw_lhs(current,next){
+                build_rewrite_info_at(current, next,  rule, &rw_lhs, 0, direction, &mut explanations);
+            }
         }
     }
     }

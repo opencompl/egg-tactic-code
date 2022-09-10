@@ -126,27 +126,8 @@ theorem inv_mul_cancel_left (G: Type)
   (mulOne: forall (a: G), a = mul a one)
   (invRight: forall (a: G), one = mul a (inv a))
   (invRightX: one = mul x (inv x))
-  : (inv (inv x) = x) := by {
-  --rawEgg [assocMul, invLeft, mulOne, invRightX]
-  rw [mulOne (inv (inv x))]
-  rw [← invLeft x]
-  rw [mulOne x] -- I think here's where it fails.
-                -- We need to replace a single directed instance, not all
-  rw [invLeft x]
+  : (inv (inv x) = x) := by 
+  rawEgg [assocMul, invLeft, mulOne, invRightX]
 
-  /- fails at:
-    {
-      "source": "(ap (ap mul (ap inv (ap inv x))) (ap (ap mul (ap inv x)) (ap (ap mul one) x)))",
-      "rewrite": "0",
-      "mvars": {
-        "?_uniq.560": "(ap (ap mul one) x)",
-        "?_uniq.559": "(ap inv x)",
-        "?_uniq.558": "(ap inv (ap inv x))"
-      },
-      "direction": "fwd",
-      "result": "(ap (ap mul (ap (ap mul (ap inv (ap inv x))) (ap inv x))) (ap (ap mul one) x))"
-    },
-  -/
-}
 #print inv_mul_cancel_left
 
