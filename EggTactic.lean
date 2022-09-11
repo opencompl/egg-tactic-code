@@ -255,7 +255,7 @@ def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do
 
 -- Find expressions of a given type in the local context
 def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit := do
-   withMVarContext g do -- TODO: deprecated
+   g.withContext do
     let lctx <- getLCtx
     for ldecl in lctx do
       let ldecl_type <- inferType ldecl.toExpr
@@ -461,6 +461,53 @@ def runEggRequestRaw (requestJson: String): MetaM String := do
     dbg_trace ("9)stdout:\n" ++ stdout)
     return stdout
 
+def instantiateRewriteMVars
+  (unappliedRw : Expr)
+  (unappliedRwType : Expr)
+  (direction : EggRewriteDirection)
+  (opargs : Array (Option Expr))
+  : MetaM (Expr × Expr) := do
+    -- TODO: Is there a better way to instantiating universal quantifiers?
+    let (ms, _binders, rwTypeAppliedToMVar) ← forallMetaTelescope unappliedRwType
+    let mut args : Array Expr := #[]
+    for (m, oparg) in ms.zip opargs do
+      match oparg with
+        | some arg =>
+          dbg_trace "*** mvar {m} := {arg}"
+          -- TODO: how about this one, is there a less cursed way here?
+          let _ ← isDefEq m arg -- force unification
+          args:= args.push arg
+        | none => args:= args.push m
+
+    -- resolve `MVar`s that were unified above in `rwTypeAppliedToMVar`
+    let rwTy ← instantiateMVars rwTypeAppliedToMVar
+    dbg_trace "***rwTy: {rwTy}"
+    let rwTy ← match (← matchEq? rwTy) with
+                | .some (_, source, target) =>
+                    if direction == .Forward then
+                      mkEq source target
+                    else
+                      mkEq target source
+                | .none => throwError "unable to matchEq? {rwTy}"
+    dbg_trace "***rwTy: {rwTy}"
+    -- let (ms, binders, rwAppliedToMVar) ← forallMetaTelescope eggrw.unappliedRw
+    -- for (m, arg) in ms.zip args do
+    --   dbg_trace "*** mvar {m} := {arg}"
+    --   let _ ← isDefEq m arg -- force unification
+    -- let rw ← instantiateMVars rwAppliedToMVar
+    let rw := unappliedRw
+    dbg_trace "***rw: {rw}"
+    let rw := mkAppN rw args
+    dbg_trace "***rw: {rw}"
+    -- TODO: just in case (quote bollu "it's spiritual; I ask god")
+    let rw ← instantiateMVars rw
+    dbg_trace "***rw: {rw}"
+    let rw ← (if direction == EggRewriteDirection.Forward
+             then pure rw
+             else mkEqSymm rw)
+    dbg_trace "***rw: {rw}"
+    return (rw, rwTy)
+
 
 def Eggxplanation.instantiateEqType
   (expl: Eggxplanation)
@@ -469,49 +516,14 @@ def Eggxplanation.instantiateEqType
         | .Forward =>  mkEq expl.source expl.result
         | .Backward =>  mkEq expl.result expl.source
     dbg_trace "*** eq                       : {eq}"
-    let mut args : Array Expr := #[]
+    let mut args : Array (Option Expr) := #[]
+    -- We assume all mvars are used and they are in the right order here
     for mvar in eggrw.pretendMVars do
       match expl.mvars.lookup (mvarIdToSexp mvar) with
       | .some val =>
-          args := args.push val
+          args := args.push (some val)
       | .none => throwError "unable to find value for mvar: {mvar}"
-
-    -- TODO: Is there a better way to instantiating universal quantifiers?
-    let (ms, _binders, rwTypeAppliedToMVar) ← forallMetaTelescope eggrw.unappliedRwType
-    for (m, arg) in ms.zip args do
-      dbg_trace "*** mvar {m} := {arg}"
-      -- TODO: how about this one, is there a less cursed way here?
-      let _ ← isDefEq m arg -- force unification
-
-    -- resolve `MVar`s that were unified above in `rwTypeAppliedToMVar`
-    let rwTy ← instantiateMVars rwTypeAppliedToMVar
-    dbg_trace "***rwTy: {rwTy}"
-    let rwTy ← match (← matchEq? rwTy) with
-                | .some (_, source, target) =>
-                    if expl.direction == .Forward then
-                      mkEq source target
-                    else
-                      mkEq target source
-                | .none => throwError "unable to matchEq? {rwTy}"
-    dbg_trace "***rwTy: {rwTy}"
-
-    -- let (ms, binders, rwAppliedToMVar) ← forallMetaTelescope eggrw.unappliedRw
-    -- for (m, arg) in ms.zip args do
-    --   dbg_trace "*** mvar {m} := {arg}"
-    --   let _ ← isDefEq m arg -- force unification
-    -- let rw ← instantiateMVars rwAppliedToMVar
-    let rw := eggrw.unappliedRw
-    dbg_trace "***rw: {rw}"
-    let rw := mkAppN rw args
-    dbg_trace "***rw: {rw}"
-    -- TODO: just in case (quote bollu "it's spiritual; I ask god")
-    let rw ← instantiateMVars rw
-    dbg_trace "***rw: {rw}"
-    let rw ← (if expl.direction == EggRewriteDirection.Forward
-             then pure rw
-             else mkEqSymm rw)
-    dbg_trace "***rw: {rw}"
-    return (rw, rwTy)
+    instantiateRewriteMVars eggrw.unappliedRw eggrw.unappliedRwType expl.direction args
 
 def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
   : Sexp × Sexp × List EggRewrite × VariableMapping :=
