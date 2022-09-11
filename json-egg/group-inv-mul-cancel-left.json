@@ -1,4 +1,5 @@
 {
+    "timeout": 3,
     "rewrites": [
         {
             "rhs": "(ap (ap mul y) (ap inv y))",
@@ -16,18 +17,18 @@
             "name": "40"
         },
         {
-            "rhs": "?_uniq.306",
-            "lhs": "(ap (ap mul ?_uniq.306) one)",
+            "rhs": "?_uniq.460",
+            "lhs": "(ap (ap mul one) ?_uniq.460)",
             "name": "39"
         },
         {
             "rhs": "y",
-            "lhs": "(ap (ap mul y) one)",
+            "lhs": "(ap (ap mul one) y)",
             "name": "38"
         },
         {
             "rhs": "x",
-            "lhs": "(ap (ap mul x) one)",
+            "lhs": "(ap (ap mul one) x)",
             "name": "37"
         },
         {
@@ -36,8 +37,8 @@
             "name": "36"
         },
         {
-            "rhs": "(ap (ap mul ?_uniq.305) one)",
-            "lhs": "?_uniq.305",
+            "rhs": "(ap (ap mul ?_uniq.459) one)",
+            "lhs": "?_uniq.459",
             "name": "35"
         },
         {
@@ -57,7 +58,7 @@
         },
         {
             "rhs": "one",
-            "lhs": "(ap (ap mul (ap inv ?_uniq.304)) ?_uniq.304)",
+            "lhs": "(ap (ap mul (ap inv ?_uniq.458)) ?_uniq.458)",
             "name": "31"
         },
         {
@@ -76,8 +77,8 @@
             "name": "28"
         },
         {
-            "rhs": "(ap (ap mul (ap (ap mul ?_uniq.301) ?_uniq.302)) ?_uniq.303)",
-            "lhs": "(ap (ap mul ?_uniq.301) (ap (ap mul ?_uniq.302) ?_uniq.303))",
+            "rhs": "(ap (ap mul (ap (ap mul ?_uniq.455) ?_uniq.456)) ?_uniq.457)",
+            "lhs": "(ap (ap mul ?_uniq.455) (ap (ap mul ?_uniq.456) ?_uniq.457))",
             "name": "27"
         },
         {
@@ -217,6 +218,6 @@
         }
     ],
     "target-rhs": "y",
-    "target-lhs": "(ap (ap mul (ap inv x)) (ap (ap mul x) y))",
+    "target-lhs": "(ap (ap mul x) (ap (ap mul (ap inv x)) y))",
     "request": "perform-rewrite"
 }

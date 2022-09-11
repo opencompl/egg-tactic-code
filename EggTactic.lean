@@ -369,6 +369,7 @@ def instantiateRewriteMVars
     -- let rw ← instantiateMVars rwAppliedToMVar
     let rw := unappliedRw
     dbg_trace "***rw: {rw}"
+    dbg_trace "***applying args: {args}"
     let rw := mkAppN rw args
     dbg_trace "***rw: {rw}"
     -- TODO: just in case (quote bollu "it's spiritual; I ask god")
@@ -430,14 +431,19 @@ partial def addMVarExplodedEquality
   -- this function recursively
   let (ms, _binders, rwTypeAppliedToMVar) ← forallMetaTelescope unappliedRwType
   let mut mvars := ms.zip mvarsToKeep
+  let mut args : Array (Option Expr) := #[]
   for _ in (List.range mvars.size) do
     let (mvar,keep?) := mvars.back
     mvars := mvars.pop
-    unless keep? do
+    if !(keep?) then
+      args := args.push none
+    else
       let xty := ty -- TODO: get the mvar type, not xty
       withExprsOfType goal xty $ λ xval => do
          dbg_trace "**exploding {xty} @ {xval} : {← inferType xval }"
-         let (newExpr,newExprTy) ← instantiateRewriteMVars rwUnapplied unappliedRwType .Forward #[some xval]
+
+         let xvalargs := args.append #[some xval] |>.append $ Array.mkArray (args.size - 1) none
+         let (newExpr,newExprTy) ← instantiateRewriteMVars rwUnapplied unappliedRwType .Backward xvalargs
          addBareEquality goal newExpr rwUnapplied newExprTy unappliedRwType newExpr.getAppMVars
       break -- The recursive calls will get the rest of the mvars.
                -- This is, admittedly, somewhat redundant.
@@ -468,11 +474,14 @@ partial def addForallExplodedEquality_ (goal: MVarId)
    withExprsOfType goal xty $ λ xval => do
       -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
       -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
+      -- We apply the value and pass it on recursively. This becomes the
+      -- new "unapplied" type, as the applied argument is not going to
+      -- be passed as an mvar anymore
       addForallExplodedEquality_ goal
           (Expr.beta rw #[xval])
-          rwUnapplied
+          (Expr.beta rw #[xval]) 
           (← instantiateForall ty #[xval])
-          unappliedRwType
+          (← instantiateForall ty #[xval])
   } else {
     addBareEquality goal rw rwUnapplied ty unappliedRwType #[]
   }
