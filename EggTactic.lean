@@ -385,9 +385,7 @@ def instantiateRewriteMVars
 /-
 Create a regular equality of the form lhs = rhs
 -/
-mutual
-partial def addBareEquality
-  (goal : MVarId)
+def addBareEquality
   (rw: Expr)
   (rwUnapplied: Expr)
   (ty: Expr)
@@ -410,56 +408,21 @@ partial def addBareEquality
         (← exprToSexp lhs)
         (← exprToSexp rhs) mvars
   else if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
-    let keepMvars := rhs.getAppMVars.map
-      λ mv => lhs.getAppMVars.contains mv
-    dbg_trace "TODO: explode subset here: (LHS: {lhs}) (RHS: {rhs})"
-    -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
-        --addForallExplodedEquality goal rw ty
-    addMVarExplodedEquality goal rw rwUnapplied ty unappliedRwType keepMvars
+    return ()
   else
     dbg_trace "ERROR: have equality where RHS has more vars than LHS: (LHS: {lhs}) (RHS: {rhs})"
-
-partial def addMVarExplodedEquality
-  (goal : MVarId)
-  (rw: Expr)
-  (rwUnapplied: Expr)
-  (ty: Expr)
-  (unappliedRwType: Expr)
-  (mvarsToKeep: Array Bool) :
-  EggM Unit := do
-  -- instantiate curMvar to all possibilities of type and call
-  -- this function recursively
-  let (ms, _binders, rwTypeAppliedToMVar) ← forallMetaTelescope unappliedRwType
-  let mut mvars := ms.zip mvarsToKeep
-  let mut args : Array (Option Expr) := #[]
-  for _ in (List.range mvars.size) do
-    let (mvar,keep?) := mvars.back
-    mvars := mvars.pop
-    if !(keep?) then
-      args := args.push none
-    else
-      let xty := ty -- TODO: get the mvar type, not xty
-      withExprsOfType goal xty $ λ xval => do
-         dbg_trace "**exploding {xty} @ {xval} : {← inferType xval }"
-
-         let xvalargs := args.append #[some xval] |>.append $ Array.mkArray (args.size - 1) none
-         let (newExpr,newExprTy) ← instantiateRewriteMVars rwUnapplied unappliedRwType .Backward xvalargs
-         addBareEquality goal newExpr rwUnapplied newExprTy unappliedRwType newExpr.getAppMVars
-      break -- The recursive calls will get the rest of the mvars.
-               -- This is, admittedly, somewhat redundant.
-
-end
 
 /-
 Create an equality with MVars
 -/
 def addForallMVarEquality (goal : MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
+
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallMVarEquality {rw} : {ty}"
   let (ms, _binders, tyNoForall) ← forallMetaTelescope ty
   -- | code taken from Lean/Meta/Rewrite.lean by looking at `heq`.
   let rwApplied := mkAppN rw ms -- is this correct?
-  addBareEquality goal rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!)
+  addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!)
 
 
 --  explode an equality with ∀ by creating many variations, from the local context.
@@ -468,22 +431,36 @@ def addForallMVarEquality (goal : MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
 partial def addForallExplodedEquality_ (goal: MVarId)
   (rw: Expr) (rwUnapplied: Expr)
   (ty: Expr)
-  (unappliedRwType: Expr): EggM Unit := do
+  (unappliedRwType: Expr)
+  (toExplode : Array Bool)
+  : EggM Unit := do
   if let Expr.forallE x xty body _ := ty then do {
   --dbg_trace "**forall is : (FA [{x} : {xty}] {body})"
-   withExprsOfType goal xty $ λ xval => do
-      -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
-      -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
-      -- We apply the value and pass it on recursively. This becomes the
-      -- new "unapplied" type, as the applied argument is not going to
-      -- be passed as an mvar anymore
-      addForallExplodedEquality_ goal
-          (Expr.beta rw #[xval])
-          (Expr.beta rw #[xval]) 
-          (← instantiateForall ty #[xval])
-          (← instantiateForall ty #[xval])
+   if toExplode.back then{
+       withExprsOfType goal xty $ λ xval => do
+          -- dbg_trace "**exploding {ty} @ {xval} : {← inferType xval }"
+          -- addForallExplodedEquality_ goal rw (←  mkAppM' ty #[xval])
+          -- We apply the value and pass it on recursively. This becomes the
+          -- new "unapplied" type, as the applied argument is not going to
+          -- be passed as an mvar anymore
+            addForallExplodedEquality_ goal
+                (Expr.beta rw #[xval])
+                (Expr.beta rw #[xval])
+                (← instantiateForall ty #[xval])
+                (← instantiateForall ty #[xval])
+                toExplode.pop
+   }
+  -- TODO: if we're skipping, don't beta-reduce,
+  -- convert to mvar instead and continue
+  -- This doesn't seem to work as-is.
+  -- else{ 
+  --   let (_,_,newRW) ← forallMetaTelescopeReducing rw (maxMVars? := some 1)
+  --   let newType ← inferType newRW
+  --   addForallExplodedEquality_ goal
+  --       newRW newRW newType newType toExplode.pop
+  -- }
   } else {
-    addBareEquality goal rw rwUnapplied ty unappliedRwType #[]
+    addBareEquality rw rwUnapplied ty unappliedRwType #[]
   }
 
 
@@ -491,7 +468,19 @@ partial def addForallExplodedEquality_ (goal: MVarId)
 def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallExplodedEquality {rw} : {ty}"
-  addForallExplodedEquality_ goal rw rw ty ty
+  let (_, _, tyeq) ← forallMetaTelescope ty
+  let (lhs, rhs)  ←
+      match (← matchEq? tyeq) with
+      | some (_, lhs, rhs) =>
+          pure (lhs, rhs)
+      | none => throwError f!"**expected type to be equality: {ty}"
+    let toExplode := rhs.getAppMVars.map
+      λ mv => !lhs.getAppMVars.contains mv
+    dbg_trace "TODO: explode subset here: (LHS: {lhs}) (RHS: {rhs})"
+    -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
+        --addForallExplodedEquality goal rw ty
+  -- we reverse toExplode so we can pop later
+  addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
 
 -- Add an expression into the EggM context, if it is indeed a rewrite
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
@@ -501,7 +490,7 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
         addForallExplodedEquality goal rw ty
         addForallMVarEquality goal rw ty
     else if ty.isEq then do
-        addBareEquality goal rw rw ty ty #[]
+        addBareEquality rw rw ty ty #[]
   else if ty.isMVar then
     let foo := 0
     dbg_trace "rw isMVar"
