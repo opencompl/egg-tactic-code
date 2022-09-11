@@ -1,0 +1,12 @@
+{
+    "request": "perform-rewrite",
+    "target-lhs": "(plus (plus (times x y) (times y x)) (plus (times x y) (times y x)))",
+    "target-rhs": "(plus (plus (times y x) (times x y)) (plus (times x y) (times y x)))",
+    "rewrites": [
+        {
+            "name": "1",
+            "lhs": "(plus ?a ?b)",
+            "rhs": "(plus ?b ?a)"
+        }
+    ]
+}

@@ -1,0 +1,17 @@
+{
+    "request": "perform-rewrite",
+    "target-lhs": "(op x x x x x)",
+    "target-rhs": "(op x x y x z)",
+    "rewrites": [
+        {
+            "name": "1",
+            "lhs": "x",
+            "rhs": "y"
+        },
+        {
+            "name": "0",
+            "lhs": "x",
+            "rhs": "z"
+        }
+    ]
+}
