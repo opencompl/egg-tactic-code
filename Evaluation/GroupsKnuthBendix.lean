@@ -9,7 +9,7 @@ theorem inv_inv
   (invLeft: forall (a: G), mul (inv a) a = one)
   (mulOne: forall (a: G), a = mul a one)
   (oneMul: forall (a: G), mul one a = a)
-  (invRight: forall (a: G), one = mul a (inv a))
+  (invRight: forall (a: G), mul a (inv a) = one)
   (x: G)
   : (inv (inv x) = x) := by
   rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]

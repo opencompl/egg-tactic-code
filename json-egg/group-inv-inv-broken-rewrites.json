@@ -1,0 +1,53 @@
+{
+    "timeout": 3,
+    "rewrites": [
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 ?_uniq.115) (ap v9 ?_uniq.115))",
+            "name": "8"
+        },
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 v8) (ap v9 v8))",
+            "name": "7"
+        },
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 v10) (ap v9 v10))",
+            "name": "6"
+        },
+        {
+            "rhs": "?_uniq.113",
+            "lhs": "(ap (ap v11 v10) ?_uniq.113)",
+            "name": "5"
+        },
+        {
+            "rhs": "?_uniq.111",
+            "lhs": "(ap (ap v11 ?_uniq.111) v10)",
+            "name": "4"
+        },
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 (ap v9 ?_uniq.109)) ?_uniq.109)",
+            "name": "3"
+        },
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 (ap v9 v8)) v8)",
+            "name": "2"
+        },
+        {
+            "rhs": "v10",
+            "lhs": "(ap (ap v11 (ap v9 v10)) v10)",
+            "name": "1"
+        },
+        {
+            "rhs": "(ap (ap v11 (ap (ap v11 ?_uniq.75) ?_uniq.76)) ?_uniq.77)",
+            "lhs": "(ap (ap v11 ?_uniq.75) (ap (ap v11 ?_uniq.76) ?_uniq.77))",
+            "name": "0"
+        }
+    ],
+    "target-rhs": "v8",
+    "target-lhs": "(ap v9 (ap v9 v8))",
+    "request": "perform-rewrite"
+}

@@ -21,6 +21,18 @@ builtin_initialize registerTraceClass `EggTactic.egg
 def egg_server_path : String :=
   "json-egg/target/release/egg-herbie"
 
+inductive EggRewriteDirection where
+  | Forward
+  | Backward
+  deriving Inhabited, DecidableEq
+
+def EggRewriteDirection.toString : EggRewriteDirection → String
+  | Forward => "fwd"
+  | Backward => "bwd"
+
+instance : ToString EggRewriteDirection where toString := EggRewriteDirection.toString
+
+open EggRewriteDirection
 
 structure EggRewrite where
   name: String
@@ -33,17 +45,11 @@ structure EggRewrite where
   unappliedRw: Expr -- the rewrite without fvars applied
   rwType: Expr
   unappliedRwType: Expr
+  direction : EggRewriteDirection
 
 instance : Inhabited EggRewrite where
   default := EggRewrite.mk
-         "default" "default" "default" #[] default default default default
-
-inductive EggRewriteDirection where
-  | Forward
-  | Backward
-  deriving Inhabited, DecidableEq
-
-open EggRewriteDirection
+         "default" "default" "default" #[] default default default default default
 
 structure Eggxplanation where
   direction: EggRewriteDirection -- direction of the rewrite
@@ -55,10 +61,9 @@ structure Eggxplanation where
 
 instance : ToString Eggxplanation where
   toString expl :=
-    let dir := if expl.direction == Forward then "fwd" else "bwd"
     let mvars := expl.mvars.map (fun (mvar, expr) => s!"{mvar} := {expr}")
     let mvars := "{" ++ (", ".intercalate mvars) ++ "}"
-    toString f!"(Eggxplanation dir:{dir} rule:{expl.rule} mvars:{mvars} result:{expl.result})"
+    toString f!"(Eggxplanation dir:{expl.direction} rule:{expl.rule} mvars:{mvars} result:{expl.result})"
 
 
 
@@ -195,10 +200,13 @@ def surround_escaped_quotes (s: String): String :=
 
 
 def EggRewrite.toJson (rewr: EggRewrite) :=
+  let eggLhs := if rewr.direction == Forward then rewr.lhs else rewr.rhs
+  let eggRhs := if rewr.direction == Forward then rewr.rhs else rewr.lhs
+  dbg_trace "sending rewrite {rewr.name} to egg with direction {rewr.direction}"
   "{"
     ++ surroundQuotes "name" ++ ":" ++ surroundQuotes rewr.name ++ ","
-    ++ surroundQuotes "lhs" ++ ":" ++ surroundQuotes rewr.lhs.toString ++ ","
-    ++ surroundQuotes "rhs" ++ ":" ++ surroundQuotes rewr.rhs.toString ++
+    ++ surroundQuotes "lhs" ++ ":" ++ surroundQuotes eggLhs.toString ++ ","
+    ++ surroundQuotes "rhs" ++ ":" ++ surroundQuotes eggRhs.toString ++
   "}"
 
 instance : ToString EggRewrite where
@@ -283,7 +291,9 @@ partial def addEggRewrite
   (unappliedRwType: Expr)
   (lhs: Sexp)
   (rhs: Sexp)
-  (pretendMVars: Array MVarId): EggM Unit := do
+  (pretendMVars: Array MVarId)
+  (direction : EggRewriteDirection)
+  : EggM Unit := do
   let i := (← get).ix
   dbg_trace s!"addEggRewrite rw:{rw} ty:{ty} lhs:{lhs} rhs:{rhs} name:{i}"
 
@@ -295,11 +305,13 @@ partial def addEggRewrite
     , unappliedRw := unappliedRw
     , rwType := ty
     , unappliedRwType := unappliedRwType
-    , pretendMVars := pretendMVars : EggRewrite }
+    , pretendMVars := pretendMVars
+    , direction := direction
+    : EggRewrite }
   modify (fun state => { state with ix := i + 1, name2expr := (i, rw) :: state.name2expr, rewrites := egg_rewrite :: state.rewrites })
 
 def expr_get_forall_bound_vars: Expr -> List Name
-| Expr.forallE name ty body _ => name :: expr_get_forall_bound_vars body
+| Expr.forallE name _ty body _ => name :: expr_get_forall_bound_vars body
 | _ => []
 
 
@@ -390,7 +402,9 @@ def addBareEquality
   (rwUnapplied: Expr)
   (ty: Expr)
   (unappliedRwType: Expr)
-  (mvars: Array MVarId): EggM Unit := do
+  (mvars: Array MVarId)
+  (direction : EggRewriteDirection)
+  : EggM Unit := do
   dbg_trace "**adding bareEquality {rw} : {ty}"
   -- Check if the lhs has all the mvars of the rhs
   let (lhs, rhs)  ←
@@ -402,15 +416,16 @@ def addBareEquality
   -- on the RHS is deduced from the LHS. Thus, we check that
   -- the metavars that occur on the RHS is a subset of the LHS, and
   -- we flip the equality in the symmetric case.
-  if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
+  if (rhs.getAppMVars.isSubsetOf lhs.getAppMVars
+      && direction == Forward) ||
+     (lhs.getAppMVars.isSubsetOf rhs.getAppMVars
+      && direction == Backward) then
     addEggRewrite rw rwUnapplied
         ty unappliedRwType
         (← exprToSexp lhs)
-        (← exprToSexp rhs) mvars
-  else if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
-    return ()
+        (← exprToSexp rhs) mvars direction
   else
-    dbg_trace "ERROR: have equality where RHS has more vars than LHS: (LHS: {lhs}) (RHS: {rhs})"
+    dbg_trace "ERROR: Trying to add equality where the mvars of the LHS ({lhs}) is not a subset of the mvars of the RHS ({rhs})"
 
 /-
 Create an equality with MVars
@@ -421,8 +436,20 @@ def addForallMVarEquality (goal : MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   dbg_trace "**adding forallMVarEquality {rw} : {ty}"
   let (ms, _binders, tyNoForall) ← forallMetaTelescope ty
   -- | code taken from Lean/Meta/Rewrite.lean by looking at `heq`.
+  let (lhs, rhs)  ←
+      match (← matchEq? tyNoForall) with
+      | some (_, lhs, rhs) =>
+          pure (lhs, rhs)
+      | none => throwError f!"**expected type to be equality: {ty}"
+
   let rwApplied := mkAppN rw ms -- is this correct?
-  addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!)
+  if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
+    addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!) Forward
+  else if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
+    addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!) Backward
+  else
+    dbg_trace "error adding {rw}, neither side's variables are a subset of the other"
+
 
 
 --  explode an equality with ∀ by creating many variations, from the local context.
@@ -460,7 +487,7 @@ partial def addForallExplodedEquality_ (goal: MVarId)
   --       newRW newRW newType newType toExplode.pop
   -- }
   } else {
-    addBareEquality rw rwUnapplied ty unappliedRwType #[]
+    addBareEquality rw rwUnapplied ty unappliedRwType #[] Forward
   }
 
 
@@ -474,13 +501,18 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
       | some (_, lhs, rhs) =>
           pure (lhs, rhs)
       | none => throwError f!"**expected type to be equality: {ty}"
+  if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
     let toExplode := rhs.getAppMVars.map
       λ mv => !lhs.getAppMVars.contains mv
-    dbg_trace "TODO: explode subset here: (LHS: {lhs}) (RHS: {rhs})"
-    -- addEggRewrite (← mkEqSymm rw) (← exprToString rhs) (← exprToString lhs)
-        --addForallExplodedEquality goal rw ty
-  -- we reverse toExplode so we can pop later
-  addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+    -- we reverse toExplode so we can pop later
+    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+  else if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
+    let toExplode := lhs.getAppMVars.map
+      λ mv => !rhs.getAppMVars.contains mv
+    -- we reverse toExplode so we can pop later
+    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+  else
+    dbg_trace "error exploding {rw}, neither side's mvars are a subset of the other"
 
 -- Add an expression into the EggM context, if it is indeed a rewrite
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
@@ -490,7 +522,7 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
         addForallExplodedEquality goal rw ty
         addForallMVarEquality goal rw ty
     else if ty.isEq then do
-        addBareEquality rw rw ty ty #[]
+        addBareEquality rw rw ty ty #[] Forward
   else if ty.isMVar then
     let foo := 0
     dbg_trace "rw isMVar"
@@ -570,7 +602,8 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
           [{ name := rw.name, lhs := lhs, rhs := rhs,
              pretendMVars := rw.pretendMVars, rw := rw.rw,
              unappliedRw := rw.unappliedRw, rwType := rw.rwType,
-             unappliedRwType := rw.unappliedRwType : EggRewrite}]
+             unappliedRwType := rw.unappliedRwType, direction := rw.direction
+             : EggRewrite}]
         remaining := remaining'
       else
         panic! "error unpacking rewrites"
@@ -598,7 +631,7 @@ def parseEggResponse (goal: MVarId) (varMapping : VariableMapping) (responseStri
       -- map over each element into an explanation
       let explanation <- explanation.mapM (parseExplanation varMapping)
       let explanation := explanation.toList
-      dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map toString) ++ "|")
+      dbg_trace ("13) explanation: |" ++ String.intercalate " ;;; " (explanation.map ToString.toString) ++ "|")
       return explanation
 
 -- High level wrapped aroung runEggRequestRaw that is well-typed, and returns the
@@ -609,7 +642,7 @@ def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanatio
 -- Add rewrites with known names 'rewriteNames' from the local context of 'goalMVar'
 def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :=
   withMVarContext goalMVar do
-    dbg_trace " addNamedRewrites {goalMVar.name} {rewriteNames.map toString}"
+    dbg_trace " addNamedRewrites {goalMVar.name} {rewriteNames.map ToString.toString}"
     for decl in (← getLCtx) do
     -- TODO: find a way to not have to use strings, see how 'simp' does this.
     if !((rewriteNames.map fun ident => ident.getId ).contains decl.userName)
@@ -626,6 +659,9 @@ def Lean.TSyntax.getTimeLimit : TSyntax `time_limit → Nat
 
 elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainContext do
   dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
+  let decls : List LocalDecl := (← getLCtx).decls.toList.filter Option.isSome |>.map Option.get!
+  let idsnames := decls.map λ decl => (repr decl.fvarId, decl.userName)
+  dbg_trace "\nfvar local decls: {idsnames}\n"
 
   let (_, goalLhs, goalRhs) ← match (← matchEq? (<- getMainTarget)) with
     | .none => throwError "Egg: target not equality: {<- getMainTarget}"
@@ -685,7 +721,7 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainC
     -- let isEq ← isDefEq eggLhs mainLhs
     -- dbg_trace (s!"16) isEq:          : {isEq}")
     dbg_trace (s!"16) rewrite        : {eggxplanationRw}")
-    let rewriteType ← inferType eggxplanationRw 
+    let rewriteType ← inferType eggxplanationRw
     dbg_trace (s!"16) rewrite type   : {rewriteType}")
     --dbg_trace (s!"16) rewrite type   : {← inferType eggxplanationRw}")
     -- TODO: maybe revive the code that passes the direction (and the burden)
@@ -694,9 +730,13 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainC
         (<- getMainTarget)
         eggxplanationRw
         (occs := Occurrences.pos [e.position])
+        -- The rewrite direction here is different from the direction of the
+        -- explanation! The former is given by egg, the latter is what *we* gave
+        -- to egg.
+        (symm := eggRewrite.direction == Backward)
 
     dbg_trace (f!"rewritten to: {rewriteResult.eNew}")
-    let mvarId' ← replaceTargetEq (← getMainGoal) rewriteResult.eNew rewriteResult.eqProof
+    let mvarId' ← (← getMainGoal).replaceTargetEq rewriteResult.eNew rewriteResult.eqProof
     replaceMainGoal (mvarId' :: rewriteResult.mvarIds)
 
     -- let goal'ty <- inferType (Expr.mvar goal')
