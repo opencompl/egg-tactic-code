@@ -385,11 +385,11 @@ fn handle_request(req: Request) -> Response {
 
             let lhs_id = graph.add_expr(&target_lhs_expr);
             let rhs_id = graph.add_expr(&target_rhs_expr);
-            //let scheduler = BackoffScheduler::default().with_initial_match_limit(64);
             // let e : RecExpr = eresult.expect("expected parseable expression");
             let mut runner = Runner::default()
             //.with_scheduler(scheduler::BoundedGraphScheduler::default())
-            .with_scheduler(SimpleScheduler)
+            //.with_scheduler(BackoffScheduler::default().with_initial_match_limit(8))
+            //.with_scheduler(SimpleScheduler)
             .with_node_limit(99999)
             .with_time_limit(Duration::from_secs(timeout))
             .with_iter_limit(99999)

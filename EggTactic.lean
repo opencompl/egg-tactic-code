@@ -492,7 +492,8 @@ partial def addForallExplodedEquality_ (goal: MVarId)
   --       newRW newRW newType newType toExplode.pop
   -- }
   } else {
-    addBareEquality rw rwUnapplied ty unappliedRwType #[] Forward
+    addBareEquality rw rwUnapplied ty unappliedRwType #[] Forward;
+    addBareEquality rw rwUnapplied ty unappliedRwType #[] Backward
   }
 
 

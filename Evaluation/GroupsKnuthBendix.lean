@@ -7,8 +7,8 @@ theorem inv_inv
   (one: G)
   (assocMul: forall (a b c: G), mul a (mul b c) = (mul (mul a b) c))
   (invLeft: forall (a: G), mul (inv a) a = one)
-  (mulOne: forall (a: G), a = mul a one)
   (oneMul: forall (a: G), mul one a = a)
+  (mulOne: forall (a: G), mul a one = a)
   (invRight: forall (a: G), mul a (inv a) = one)
   (x: G)
   : (inv (inv x) = x) := by
@@ -21,9 +21,9 @@ theorem inv_mul_cancel_left
   (one: G)
   (assocMul: forall (a b c: G), mul a (mul b c) = (mul (mul a b) c))
   (invLeft: forall (a: G), mul (inv a) a = one)
-  (mulOne: forall (a: G), a = mul a one)
+  (mulOne: forall (a: G), mul a one = a)
   (oneMul: forall (a: G), mul one a = a)
-  (invRight: forall (a: G), one = mul a (inv a))
+  (invRight: forall (a: G), mul a (inv a) = one)
   (x y : G)
   : (mul (inv x) (mul x y)) = y := by
   rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
@@ -51,12 +51,12 @@ theorem inv_mul
   (one: G)
   (assocMul: forall (a b c: G), mul a (mul b c) = (mul (mul a b) c))
   (invLeft: forall (a: G), mul (inv a) a = one)
-  (mulOne: forall (a: G), a = mul a one)
   (oneMul: forall (a: G), mul one a = a)
-  (invRight: forall (a: G), one = mul a (inv a))
+  (mulOne: forall (a: G), mul a one = a)
+  (invRight: forall (a: G), mul a (inv a) = one)
   (x y : G)
   : (inv (mul x y)) = (mul (inv y) (inv x)) := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
+  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight] (timeLimit := 100)
 
 theorem one_inv
   {G: Type}
