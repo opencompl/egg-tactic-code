@@ -416,9 +416,11 @@ def addBareEquality
   -- on the RHS is deduced from the LHS. Thus, we check that
   -- the metavars that occur on the RHS is a subset of the LHS, and
   -- we flip the equality in the symmetric case.
-  if (rhs.getAppMVars.isSubsetOf lhs.getAppMVars
+  let lhsVars := lhs.getAppMVars.filter mvars.contains
+  let rhsVars := rhs.getAppMVars.filter mvars.contains
+  if (rhsVars.isSubsetOf lhsVars
       && direction == Forward) ||
-     (lhs.getAppMVars.isSubsetOf rhs.getAppMVars
+     (lhsVars.isSubsetOf rhsVars
       && direction == Backward) then
     addEggRewrite rw rwUnapplied
         ty unappliedRwType
@@ -430,7 +432,7 @@ def addBareEquality
 /-
 Create an equality with MVars
 -/
-def addForallMVarEquality (goal : MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
+def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
 
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallMVarEquality {rw} : {ty}"
@@ -443,12 +445,15 @@ def addForallMVarEquality (goal : MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
       | none => throwError f!"**expected type to be equality: {ty}"
 
   let rwApplied := mkAppN rw ms -- is this correct?
-  if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
-    addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!) Forward
-  else if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
-    addBareEquality rwApplied rw  tyNoForall ty (ms.map fun e => e.mvarId!) Backward
-  else
-    dbg_trace "error adding {rw}, neither side's variables are a subset of the other"
+  let mvIds := ms.map Expr.mvarId!
+  let lhsVars := lhs.getAppMVars.filter mvIds.contains
+  let rhsVars := rhs.getAppMVars.filter mvIds.contains
+  if rhsVars.isSubsetOf lhsVars then
+    addBareEquality rwApplied rw  tyNoForall ty mvIds Forward
+  if lhsVars.isSubsetOf rhsVars then
+    addBareEquality rwApplied rw  tyNoForall ty mvIds Backward
+  else if !(rhsVars.isSubsetOf lhsVars) then
+    throwError "error adding {rw}, neither side's variables are a subset of the other: LHS : {lhs} ({lhsVars}), RHS: {rhs} ({rhsVars})"
 
 
 
@@ -495,7 +500,7 @@ partial def addForallExplodedEquality_ (goal: MVarId)
 def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   dbg_trace "**adding forallExplodedEquality {rw} : {ty}"
-  let (_, _, tyeq) ← forallMetaTelescope ty
+  let (ms, _, tyeq) ← forallMetaTelescope ty
   let (lhs, rhs)  ←
       match (← matchEq? tyeq) with
       | some (_, lhs, rhs) =>
@@ -503,16 +508,14 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
       | none => throwError f!"**expected type to be equality: {ty}"
   if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
     let toExplode := rhs.getAppMVars.map
-      λ mv => !lhs.getAppMVars.contains mv
+      λ mv => !lhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
     -- we reverse toExplode so we can pop later
     addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
-  else if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
+  if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
     let toExplode := lhs.getAppMVars.map
-      λ mv => !rhs.getAppMVars.contains mv
+      λ mv => !rhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
     -- we reverse toExplode so we can pop later
     addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
-  else
-    dbg_trace "error exploding {rw}, neither side's mvars are a subset of the other"
 
 -- Add an expression into the EggM context, if it is indeed a rewrite
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
@@ -520,14 +523,13 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
     if ty.isForall then do
         -- TODO: add this only when metavars disallow to pass without
         addForallExplodedEquality goal rw ty
-        addForallMVarEquality goal rw ty
+        addForallMVarEquality rw ty
     else if ty.isEq then do
         addBareEquality rw rw ty ty #[] Forward
   else if ty.isMVar then
-    let foo := 0
-    dbg_trace "rw isMVar"
+    throwError "rw {rw} isMVar"
   else
-    dbg_trace "Unknown kind of rewrite {rw} : {ty}"
+    throwError "Unknown kind of rewrite {rw} : {ty}"
 
 
 -- Add all equalities from the local context
