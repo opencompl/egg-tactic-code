@@ -1,0 +1,108 @@
+{
+    "timeout": 3,
+    "rewrites": [
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul ?a) (ap inv ?a))",
+            "name": "19"
+        },
+        {
+            "rhs": "(ap (ap mul y) (ap inv y))",
+            "lhs": "one",
+            "name": "18"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul y) (ap inv y))",
+            "name": "17"
+        },
+        {
+            "rhs": "(ap (ap mul x) (ap inv x))",
+            "lhs": "one",
+            "name": "16"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul x) (ap inv x))",
+            "name": "15"
+        },
+        {
+            "rhs": "(ap (ap mul one) (ap inv one))",
+            "lhs": "one",
+            "name": "14"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul one) (ap inv one))",
+            "name": "13"
+        },
+        {
+            "rhs": "(ap (ap mul ?a) one)",
+            "lhs": "?a",
+            "name": "12"
+        },
+        {
+            "rhs": "?a",
+            "lhs": "(ap (ap mul ?a) one)",
+            "name": "11"
+        },
+        {
+            "rhs": "(ap (ap mul one) ?a)",
+            "lhs": "?a",
+            "name": "10"
+        },
+        {
+            "rhs": "?a",
+            "lhs": "(ap (ap mul one) ?a)",
+            "name": "9"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul (ap inv ?a)) ?a)",
+            "name": "8"
+        },
+        {
+            "rhs": "(ap (ap mul (ap inv y)) y)",
+            "lhs": "one",
+            "name": "7"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul (ap inv y)) y)",
+            "name": "6"
+        },
+        {
+            "rhs": "(ap (ap mul (ap inv x)) x)",
+            "lhs": "one",
+            "name": "5"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul (ap inv x)) x)",
+            "name": "4"
+        },
+        {
+            "rhs": "(ap (ap mul (ap inv one)) one)",
+            "lhs": "one",
+            "name": "3"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(ap (ap mul (ap inv one)) one)",
+            "name": "2"
+        },
+        {
+            "rhs": "(ap (ap mul ?a) (ap (ap mul ?b) ?c))",
+            "lhs": "(ap (ap mul (ap (ap mul ?a) ?b)) ?c)",
+            "name": "1"
+        },
+        {
+            "rhs": "(ap (ap mul (ap (ap mul ?a) ?b)) ?c)",
+            "lhs": "(ap (ap mul ?a) (ap (ap mul ?b) ?c))",
+            "name": "0"
+        }
+    ],
+    "target-rhs": "(ap (ap mul (ap inv y)) (ap inv x))",
+    "target-lhs": "(ap inv (ap (ap mul x) y))",
+    "request": "perform-rewrite"
+}
