@@ -102,7 +102,7 @@ def count_upward_7_at_0'
     
   }
 
-  def count_upward_v2
+  def count_upward_v3
     (count: B -> B -> B -> B)
     (count_0: ∀ (b2 b1: B), count b2 b1 O = count b2 b1 I)
     (count_1: ∀ (b2: B), count b2 O I = count b2 I O)
