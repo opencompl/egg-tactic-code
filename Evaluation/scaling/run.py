@@ -5,7 +5,11 @@ from pathlib import Path
 import logging
 from timeit import default_timer as timer
 import csv
-import shutil
+import shutil                               
+import argparse
+import pandas as pd # yeesh
+import matplotlib
+import numpy as np
 
 # Coq proof:
 # ---------
@@ -108,16 +112,9 @@ def find_repo(path):
         if git_dir.is_dir():
             return path
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    cwd = Path.cwd()
-    logging.debug(f"cwd: {cwd}")
-    rootdir = find_repo(cwd)
-    os.chdir(rootdir)
+G_DATA_HEADER = ["tool", "problemsize", "time"]
 
-    logging.debug(f"rootdir: {rootdir}")
-    assert rootdir, "Expected to find .git repo from path {path}"
-
+def run(logging, cwd, rootdir):
     logging.debug("removing directory '" + str(cwd / "build") + "'")
     if (cwd / "build").exists(): shutil.rmtree(cwd / "build")
     logging.debug("making test dirs")
@@ -125,12 +122,11 @@ if __name__ == "__main__":
     os.makedirs(cwd / "build" / "lean-simp", exist_ok=True)
     os.makedirs(cwd / "build" / "coq", exist_ok=True)
 
-    data_header = ["tool", "problemsize", "time"]
     N = 8 # failed at max. recursion depth exceeeded at N=9
 
     with open(cwd / "stats.csv", "w") as OUTFILE:
         writer = csv.writer(OUTFILE)
-        writer.writerow(data_header)
+        writer.writerow(G_DATA_HEADER)
         for i in range(1, N+1): # For Andres to count numbers
             logging.debug(f"Generating ({i}/{N})")
             # LEAN egg runner
@@ -144,7 +140,7 @@ if __name__ == "__main__":
             subprocess.check_call(command)
             end = timer()
             row = ["lean-egg", i, str(end - start)]
-            assert len(row) == len(data_header)
+            assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
             OUTFILE.flush(); os.fsync(OUTFILE)
@@ -159,7 +155,7 @@ if __name__ == "__main__":
             subprocess.check_call(command)
             end = timer()
             row = ["lean-simp", i, str(end - start)]
-            assert len(row) == len(data_header)
+            assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
             OUTFILE.flush(); os.fsync(OUTFILE)
@@ -172,7 +168,92 @@ if __name__ == "__main__":
             subprocess.check_call(command)
             end = timer()
             row = ["coq", i, str(end - start)]
-            assert len(row) == len(data_header)
+            assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
             OUTFILE.flush(); os.fsync(OUTFILE)
+
+def plot(logging, cwd, rootdir):
+    logging.debug(f"opening stats.csv")
+    df = pd.read_csv(cwd / "stats.csv")
+    # df["time"].plot(kind="bar", legend=True)
+    # plt.show()
+    # print(df)
+
+    matplotlib.rcParams['pdf.fonttype'] = 42
+    matplotlib.rcParams['ps.fonttype'] = 42
+
+    matplotlib.rcParams['figure.figsize'] = 5, 2
+    dfpivot = df.pivot(index="problemsize", columns="tool", values="time")
+    light_gray = "#cacaca"
+    dark_gray = "#827b7b"
+    light_blue = "#a6cee3"
+    dark_blue = "#1f78b4"
+    light_green = "#b2df8a"
+    dark_green = "#33a02c"
+    light_red = "#fb9a99"
+    dark_red = "#e31a1c"
+    colors = [dark_green, light_blue, dark_red]
+    ax = dfpivot.plot(kind="line", color=colors); 
+
+    # men_means = [1.5, 1.2, 1.3, 1.1, 1.0]
+    # women_means = [1.8, 1.5, 1.1, 1.3, 0.9]
+
+
+    # # Color palette
+
+    xlabels = list(df["problemsize"].unique())
+    x = np.arange(len(xlabels))  # the label locations
+    # width = 0.35  # the width of the bars
+
+    # fig, ax = plt.subplots()
+    # rects1 = ax.bar(x - width/2, men_means, width, label='Men', color = light_blue)
+    # rects2 = ax.bar(x + width/2, women_means, width, label='Women', color = dark_blue)
+
+    # # Y-Axis Label
+    # #
+    # # Use a horizontal label for improved readability.
+    ax.set_ylabel('Speedup', rotation='horizontal', position = (1, 1.05),
+        horizontalalignment='left', verticalalignment='bottom')
+
+    # # Add some text for labels, title and custom x-axis tick labels, etc.
+    ax.set_xticks(x)
+    ax.set_xticklabels(xlabels)
+    ax.legend(ncol=100, frameon=False, loc='lower right', bbox_to_anchor=(0, 1, 1, 0))
+
+    # # Hide the right and top spines
+    # #
+    # # This reduces the number of lines in the plot. Lines typically catch
+    # # a readers attention and distract the reader from the actual content.
+    # # By removing unnecessary spines, we help the reader to focus on
+    # # the figures in the graph.
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+
+    fig = ax.figure
+    fig.tight_layout()
+
+    filename = os.path.basename(__file__).replace(".py", ".pdf")
+    fig.savefig(cwd / filename)
+
+# Split into two parts, one that runs the tests and one that plots.
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    cwd = Path.cwd()
+    logging.debug(f"cwd: {cwd}")
+    rootdir = find_repo(cwd)
+    logging.debug(f"rootdir: {rootdir}")
+    assert rootdir, "Expected to find .git repo from path {path}"
+    os.chdir(rootdir)
+
+    parser = argparse.ArgumentParser(description='Evaluation')
+    parser.add_argument('-run', help='run the evaluation benchmark, save benchmark to file', action='store_true')
+    parser.add_argument('-plot', help='plot the saved benchmarks', action='store_true')
+
+    args = parser.parse_args()
+    if not args.run and not args.plot: parser.print_help()
+    if args.run:
+        run(logging=logging, cwd=cwd,rootdir=rootdir)
+
+    if args.plot:
+        plot(logging=logging,cwd=cwd,rootdir=rootdir)
