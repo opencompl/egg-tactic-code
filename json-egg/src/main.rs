@@ -147,12 +147,6 @@ fn flat_term_to_raw_sexp(t: &FlatTerm) -> Sexp {
 
     expr
 }
-
-
-fn compare_flat_terms(first : &FlatTerm, snd : &FlatTerm) -> bool{
-  flat_term_to_raw_sexp(&first) == flat_term_to_raw_sexp(&snd)
-}
-
 // Extract the rule as forward/backward from the flat term.
 // This is used to run the rules from our Lean engine.
 fn flat_term_make_bindings<'a>(
@@ -421,7 +415,24 @@ fn handle_request(req: Request) -> Response {
                 let explanation = build_proof(new_rewrites, flat_explanation);
                 Response::PerformRewrite { success: true, explanation: explanation }
             } else {
-                Response::Error {error: format!("no rewrite found! reason: {:?}", runner.stop_reason) }
+                let extractor = Extractor::new(&runner.egraph, AstSize);
+                let (_, bestlhs) = extractor.find_best(lhs_id);
+                let (_, bestrhs) = extractor.find_best(rhs_id);
+                let mut explanationlhs : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
+                    & bestlhs);
+                let mut explanationrhs : Explanation<SymbolLang> = runner.explain_equivalence(&target_rhs_expr,
+                    & bestrhs);
+
+                let flat_explanation_lhs : &FlatExplanation = explanationlhs.make_flat_explanation();
+                let flat_explanation_rhs : &FlatExplanation = explanationrhs.make_flat_explanation();
+
+                // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
+
+                // let mut rules : Vec<Vec<String>> = Vec::new();
+                let mut explanation= build_proof(new_rewrites.clone(), flat_explanation_lhs);
+                explanation.append(&mut build_proof(new_rewrites, flat_explanation_rhs));
+                Response::PerformRewrite { success: false, explanation: explanation}
+                //Response::Error {error: format!("no rewrite found! reason: {:?}", runner.stop_reason) }
 
             }
         }
