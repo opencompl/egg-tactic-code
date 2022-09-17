@@ -1,14 +1,25 @@
 import EggTactic
 -- Rewrites that force a counter to count upward.
 
+inductive B where -- bit
+| O : B
+| I : B
+open B
 
+def count_upward_v3
+    (count: B -> B -> B -> B)
+    (count_0: ∀ (b2 b1: B), count b2 b1 O = count b2 b1 I)
+    (count_1: ∀ (b2: B), count b2 O I = count b2 I O)
+    (count_2: count O I I = count I O O): count I I I = count O O O := by {
+      simp[count_0, count_1, count_2];
+      -- rawEgg[count_0, count_1, count_2];
+    }
+
+/-
 inductive N where  -- unary encoding of natural numbers
 | Z : N
 | S : N -> N
 
-inductive B where -- bit
-| O : B
-| I : B
 
 open N
 open B
@@ -101,14 +112,5 @@ def count_upward_7_at_0'
     sorry
     
   }
+-/
 
-  def count_upward_v3
-    (count: B -> B -> B -> B)
-    (count_0: ∀ (b2 b1: B), count b2 b1 O = count b2 b1 I)
-    (count_1: ∀ (b2: B), count b2 O I = count b2 I O)
-    (count_2: count O I I = count I O O): count I I I = count O O O := by {
-      simp[count_0, count_1, count_2];
-      -- rawEgg[count_0, count_1, count_2];
-    }
-
-  #reduce count_upward_v2
