@@ -5,6 +5,7 @@ from pathlib import Path
 import logging
 from timeit import default_timer as timer
 import csv
+import shutil
 
 # Coq proof:
 # ---------
@@ -117,7 +118,11 @@ if __name__ == "__main__":
     logging.debug(f"rootdir: {rootdir}")
     assert rootdir, "Expected to find .git repo from path {path}"
 
-    os.makedirs(cwd / "build" / "lean", exist_ok=True)
+    logging.debug("removing directory '" + str(cwd / "build") + "'")
+    if (cwd / "build").exists(): shutil.rmtree(cwd / "build")
+    logging.debug("making test dirs")
+    os.makedirs(cwd / "build" / "lean-egg", exist_ok=True)
+    os.makedirs(cwd / "build" / "lean-simp", exist_ok=True)
     os.makedirs(cwd / "build" / "coq", exist_ok=True)
 
     data_header = ["tool", "problemsize", "time"]
@@ -128,12 +133,13 @@ if __name__ == "__main__":
         writer.writerow(data_header)
         for i in range(1, N+1): # For Andres to count numbers
             logging.debug(f"Generating ({i}/{N})")
-            # LEAN runner
-            with open(cwd / "build" / "lean" / f"n{i}.lean", "w") as f:
+            # LEAN egg runner
+            testpath = cwd / "build" / "lean-egg" / f"n{i}.lean"
+            with open(testpath, "w") as f:
                 f.write(count_program_lean(i, "rawEgg"))
             os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
             logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
-            command = ['lean', cwd / "build" / "lean" / f"n{i}.lean"]
+            command = ['lean', testpath]
             start = timer()
             subprocess.check_call(command)
             end = timer()
@@ -142,10 +148,26 @@ if __name__ == "__main__":
             logging.debug(row)
             writer.writerow(row)
             OUTFILE.flush(); os.fsync(OUTFILE)
+            # LEAN simp runner
+            testpath = cwd / "build" / "lean-simp" / f"n{i}.lean"
+            with open(testpath, "w") as f:
+                f.write(count_program_lean(i, "simp"))
+            os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
+            logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
+            command = ['lean', testpath]
+            start = timer()
+            subprocess.check_call(command)
+            end = timer()
+            row = ["lean-simp", i, str(end - start)]
+            assert len(row) == len(data_header)
+            logging.debug(row)
+            writer.writerow(row)
+            OUTFILE.flush(); os.fsync(OUTFILE)
             # COQ runner
-            with open(cwd / "build" / "coq" / f"n{i}.v", "w") as f:
+            testpath = cwd / "build" / "coq" / f"n{i}.v"
+            with open(testpath, "w") as f:
                 f.write(count_program_coq(i))
-            command = ['coqc', cwd / "build" / "coq" / f"n{i}.v"]
+            command = ['coqc', testpath]
             start = timer()
             subprocess.check_call(command)
             end = timer()
