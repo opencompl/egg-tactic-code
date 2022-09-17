@@ -56,7 +56,7 @@ abbrev one : N := S Z
 abbrev two : N := S one
 abbrev three : N := S two
 abbrev four : N := S three
-abbrev five : N := S four
+abbrev five : N := S four                                                                                                    
 abbrev six: N := S five
 abbrev seven : N := S six
 
@@ -98,5 +98,17 @@ def count_upward_7_at_0'
       , axiom_001_SSn, axiom_001_Sn, axiom_001_n
       , axiom_010_SSn, axiom_010_Sn, axiom_010_n
     , axiom_011_SSn, axiom_011_Sn, axiom_011_n];
+    sorry
     
   }
+
+  def count_upward_v2
+    (count: B -> B -> B -> B)
+    (count_0: ∀ (b2 b1: B), count b2 b1 O = count b2 b1 I)
+    (count_1: ∀ (b2: B), count b2 O I = count b2 I O)
+    (count_2: count O I I = count I O O): count I I I = count O O O := by {
+      simp[count_0, count_1, count_2];
+      -- rawEgg[count_0, count_1, count_2];
+    }
+
+  #reduce count_upward_v2
