@@ -213,7 +213,7 @@ def plot(logging, cwd, rootdir):
     # # Y-Axis Label
     # #
     # # Use a horizontal label for improved readability.
-    ax.set_ylabel('Speedup', rotation='horizontal', position = (1, 1.05),
+    ax.set_ylabel('Total Time(s)', rotation='horizontal', position = (1, 1.05),
         horizontalalignment='left', verticalalignment='bottom')
 
     # # Add some text for labels, title and custom x-axis tick labels, etc.
@@ -234,6 +234,9 @@ def plot(logging, cwd, rootdir):
     fig.tight_layout()
 
     filename = os.path.basename(__file__).replace(".py", ".pdf")
+    fig.savefig(cwd / filename)
+
+    filename = os.path.basename(__file__).replace(".py", ".png")
     fig.savefig(cwd / filename)
 
 # Split into two parts, one that runs the tests and one that plots.
