@@ -2,6 +2,7 @@
 library(tidyverse)
 library(readr)
 library(fs)
+library(RColorBrewer)
 library(tikzDevice)
 
 args = commandArgs(trailingOnly=TRUE)
@@ -9,10 +10,15 @@ if (length(args)<1) {
   stop("expected CSV file path. usage: plotscaling.R <csv-file-path>", call.=FALSE)
 }
 
-stats <- read_csv(args[1], col_types = cols(time = col_double()))
-filter(stats, problemsize < 999999) %>%
-transform(time = time*10) %>%
-ggplot(mapping = aes(x=`problemsize`, y =`time`, color = `tool`, shape = `tool`))  +
+stats_raw <- read_csv(args[1], col_types = cols(time = col_double()))
+# sort: ours first (for color scheme)
+
+stats <- filter(stats_raw, problemsize < 999999) %>%
+transform(time = time*10, tool=ifelse(tool=="lean-egg","eggxplosion",tool))
+stats$tool <- factor(stats$tool,levels=c("eggxplosion","lean-simp","coq"))
+
+
+p <- ggplot(data =stats, mapping = aes(x=`problemsize`, y =`time`, fill = `tool`))  +
   geom_col(mapping = aes(fill = `tool`), position=position_dodge2())  +
   xlab("problem size") +
   ylab("time [s $\\cdot 10^{-1}$] (log)") + 
@@ -22,11 +28,18 @@ ggplot(mapping = aes(x=`problemsize`, y =`time`, color = `tool`, shape = `tool`)
   scale_y_log10() +
   scale_x_continuous(breaks = stats$problemsize) +
   theme_light() +
+  scale_fill_brewer(palette="Set2")  +
   theme(legend.position = c(0.1,0.90),
         legend.title = element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         legend.background=element_blank())
 
-ggsave(fs::path_ext_set(args[1], "pdf"))
+tikz(file = fs::path_ext_set(args[1], "tex"), standAlone = F, width=10,height=4)
+print(p)
+dev.off()
+
+p
 ggsave(fs::path_ext_set(args[1], "png"))
+#ggsave(fs::path_ext_set(args[1], "pdf"))
+
