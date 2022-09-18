@@ -1,5 +1,5 @@
 {
-    "timeout": 3,
+    "timeout": 9999999,
     "rewrites": [
         {
             "rhs": "one",

@@ -13,7 +13,7 @@ theorem testInstantiation
   -- egg can cope with!
   (group_inv: forall {g: Int}, g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by
- rawEgg [group_inv]
+ eggxplosion [group_inv]
 
 
 #print testInstantiation
@@ -21,7 +21,7 @@ theorem testInstantiation
 
 theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
   intros;
-  rawEgg [H]
+  eggxplosion [H]
 }
 
 #print testSuccess0
@@ -30,12 +30,12 @@ theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by
 set_option pp.analyze true in
 theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint): bint = eint := by
-  --  rawEgg [not_rewrite]
-  --  rawEgg [rewrite_wrong_type]
+  --  eggxplosion [not_rewrite]
+  --  eggxplosion [rewrite_wrong_type]
   -- rewrite [b_eq_d]
   -- rewrite [d_eq_e]
   -- rfl
-  rawEgg [b_eq_d, d_eq_e]
+  eggxplosion [b_eq_d, d_eq_e]
 
 
 #print testSuccess
@@ -43,7 +43,7 @@ theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
 
 theorem testSuccess0Symm (anat: Nat) (bnat: Nat) (H: bnat = anat): anat = bnat := by {
   intros;
-  rawEgg [H]
+  eggxplosion [H]
 }
 
 #print testSuccess0Symm
@@ -59,7 +59,7 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   eint = bint := by
    intros a b c d e aeqa beqd deqe
-   rawEgg [beqd, deqe]
+   eggxplosion [beqd, deqe]
 
 #print testSuccessRev
 
@@ -76,7 +76,7 @@ theorem testManualInstantiation
   -- @bollu's hypothesis is that we need to force
   -- metavariable resolution at the value and type level
   -- with a couple 'reduce's.
-  rawEgg [gh, gk]
+  eggxplosion [gh, gk]
 
 #print testManualInstantiation
 -/
@@ -86,7 +86,7 @@ theorem assoc_instantiate(G: Type)
   (mul: G → G → G)
   (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
   (x y z: G) : mul x (mul y z) = mul (mul x y) z := by {
-  rawEgg [assocMul]
+  eggxplosion [assocMul]
 }
 
 #print assoc_instantiate
@@ -95,7 +95,7 @@ theorem assoc_instantiate(G: Type)
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
- rawEgg []
+ eggxplosion []
  sorry
 -/
 
@@ -127,7 +127,7 @@ theorem inv_mul_cancel_left (G: Type)
   (invRight: forall (a: G), one = mul a (inv a))
   --(invRightX: one = mul x (inv x))
   : (inv (inv x) = x) := by
-  rawEgg [assocMul, invLeft, mulOne, invRight] (timeLimit := 3)
+  eggxplosion [assocMul, invLeft, mulOne, invRight] (timeLimit := 3)
 
 #print inv_mul_cancel_left
 

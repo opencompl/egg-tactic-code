@@ -5,7 +5,7 @@ from pathlib import Path
 import logging
 from timeit import default_timer as timer
 import csv
-import shutil                               
+import shutil
 import argparse
 import pandas as pd # yeesh
 import matplotlib
@@ -13,7 +13,7 @@ import numpy as np
 
 # Coq proof:
 # ---------
-# Inductive B := 
+# Inductive B :=
 # | O | I.
 # Theorem count_upward_v3: forall
 #     (count: B -> B -> B -> B)
@@ -62,10 +62,11 @@ def count_program_coq(n: int):
     
 
 #N : number of bits
-# tactic name is (simp|rawEgg)
-def count_program_lean(n: int, tactic_name: str): 
+# tactic name is (simp|eggxplosion)
+def count_program_lean(n: int, tactic_name: str):
     out = """
 import EggTactic
+set_option maxRecDepth 20000
 
 inductive B where -- bit
 | O : B
@@ -122,24 +123,27 @@ def run(logging, cwd, rootdir):
     os.makedirs(cwd / "build" / "lean-simp", exist_ok=True)
     os.makedirs(cwd / "build" / "coq", exist_ok=True)
 
-    N = 8 # failed at max. recursion depth exceeeded at N=9
+    N = 11 # failed at max. recursion depth exceeeded at N=9
 
     with open(cwd / "stats.csv", "w") as OUTFILE:
         writer = csv.writer(OUTFILE)
         writer.writerow(G_DATA_HEADER)
-        for i in range(1, N+1): # For Andres to count numbers
+        for i in range(1, N+1): # For Andres to count numbers (thanks <3!)
             logging.debug(f"Generating ({i}/{N})")
             # LEAN egg runner
             testpath = cwd / "build" / "lean-egg" / f"n{i}.lean"
             with open(testpath, "w") as f:
-                f.write(count_program_lean(i, "rawEgg"))
+                f.write(count_program_lean(i, "eggxplosion"))
             os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
             logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
             command = ['lean', testpath]
             start = timer()
-            subprocess.check_call(command)
-            end = timer()
-            row = ["lean-egg", i, str(end - start)]
+            try:
+              subprocess.check_call(command)
+              end = timer()
+              row = ["lean-egg", i, str(end - start)]
+            except:
+              row = ["lean-egg", i, "ERR"]
             assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
@@ -152,9 +156,12 @@ def run(logging, cwd, rootdir):
             logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
             command = ['lean', testpath]
             start = timer()
-            subprocess.check_call(command)
-            end = timer()
-            row = ["lean-simp", i, str(end - start)]
+            try:
+              subprocess.check_call(command)
+              end = timer()
+              row = ["lean-simp", i, str(end - start)]
+            except:
+              row = ["lean-simp", i, "ERR"]
             assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
@@ -165,15 +172,25 @@ def run(logging, cwd, rootdir):
                 f.write(count_program_coq(i))
             command = ['coqc', testpath]
             start = timer()
-            subprocess.check_call(command)
-            end = timer()
-            row = ["coq", i, str(end - start)]
+            try:
+              subprocess.check_call(command)
+              end = timer()
+              row = ["coq", i, str(end - start)]
+            except:
+              row = ["coq", i, "ERR"]
             assert len(row) == len(G_DATA_HEADER)
             logging.debug(row)
             writer.writerow(row)
             OUTFILE.flush(); os.fsync(OUTFILE)
 
 def plot(logging, cwd, rootdir):
+    os.chdir(rootdir / "Evaluation" / "scaling")
+    logging.debug(f"calling R for plotting")
+    try:
+      subprocess.check_call(["Rscript", "plotscaling.R"])
+      return
+    except:
+       logging.debug("fallback to matplotlib...")
     logging.debug(f"opening stats.csv")
     df = pd.read_csv(cwd / "stats.csv")
     # df["time"].plot(kind="bar", legend=True)

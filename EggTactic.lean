@@ -249,17 +249,26 @@ match n with
 
 def Lean.List.get? (as: List α) (n: Nat): Option α := lean_list_get? as n
 
+structure EggConfig where
+  explodeMVars : Bool
+  twoSided : Bool
+  time : Nat
+  deriving Repr
+
+instance : Inhabited EggConfig where default := { explodeMVars := true, twoSided := true, time := 3}
 
 structure EggState where
   ix: Nat := 0
   name2expr: List (Int × Expr) := []
   rewrites: List EggRewrite := []
+  config : EggConfig
   deriving Inhabited
 
 abbrev EggM (α: Type) := StateT EggState TermElabM α
 
-def EggM.getRewrites (egg: EggM Unit): TermElabM (List EggRewrite) := do
-  pure (← egg.run default).snd.rewrites
+def EggM.getRewrites (egg: EggM Unit) (cfg := instInhabitedEggConfig.default) : TermElabM (List EggRewrite) := do
+  let start : EggState := default
+  pure (← egg.run {start with config := cfg}).snd.rewrites
 
 -- Find expressions of a given type in the local context
 def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit := do
@@ -450,6 +459,8 @@ def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
   let rhsVars := rhs.getAppMVars.filter mvIds.contains
   if rhsVars.isSubsetOf lhsVars then
     addBareEquality rwApplied rw  tyNoForall ty mvIds Forward
+    unless (← get).config.twoSided do
+      return ()
   if lhsVars.isSubsetOf rhsVars then
     addBareEquality rwApplied rw  tyNoForall ty mvIds Backward
   else if !(rhsVars.isSubsetOf lhsVars) then
@@ -512,6 +523,8 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
       λ mv => !lhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
     -- we reverse toExplode so we can pop later
     addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+    unless (← get).config.twoSided do
+      return ()
   if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
     let toExplode := lhs.getAppMVars.map
       λ mv => !rhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
@@ -523,7 +536,8 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
   if ty.universallyQuantifiedEq? then
     if ty.isForall then do
         -- TODO: add this only when metavars disallow to pass without
-        addForallExplodedEquality goal rw ty
+        if (← get).config.explodeMVars
+          then addForallExplodedEquality goal rw ty
         addForallMVarEquality rw ty
     else if ty.isEq then do
         addBareEquality rw rw ty ty #[] Forward
@@ -616,13 +630,13 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
 def parseEggResponse (goal: MVarId) (varMapping : VariableMapping) (responseString: String) :
   MetaM (List Eggxplanation) := do
     let outJson : Json <- match Json.parse responseString with
-      | Except.error e => throwTacticEx `rawEgg goal e
+      | Except.error e => throwTacticEx `eggxplosion goal e
       | Except.ok j => pure j
     dbg_trace ("10)stdout as json:\n" ++ (toString outJson))
     let responseType := (outJson.getObjValD "response").getStr!
     dbg_trace ("11)stdout response: |" ++ responseType ++ "|")
     if responseType == "error"
-    then throwTacticEx `rawEgg goal (toString outJson)
+    then throwTacticEx `eggxplosion goal (toString outJson)
     else
       dbg_trace "12) Creating explanation..."
       -- This whole thing is in an Except beacause everything in Json
@@ -654,13 +668,27 @@ def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :
     s!":= {decl.toExpr} : {← inferType decl.toExpr}")
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
 
-declare_syntax_cat time_limit
-syntax "(" "timeLimit" ":=" num ")" : time_limit
-def Lean.TSyntax.getTimeLimit : TSyntax `time_limit → Nat
-  | `(time_limit| (timeLimit := $n)) => n.getNat
-  | _ => panic! "unknown timeLimit syntax"
+declare_syntax_cat eggconfigval
+declare_syntax_cat eggconfig
 
-elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainContext do
+syntax "(" "timeLimit" ":=" num ")" : eggconfigval
+syntax "noInstantiation" : eggconfigval
+syntax "oneSided" : eggconfigval
+syntax eggconfigval eggconfig : eggconfig
+syntax eggconfigval : eggconfig
+
+def Lean.TSyntax.updateEggConfig : TSyntax `eggconfigval → EggConfig → EggConfig
+  | `(eggconfig| noInstantiation ) => λ cfg => { cfg with explodeMVars := false }
+  | `(eggconfig| oneSided ) =>  λ cfg => { cfg with twoSided := false }
+  | `(eggconfig| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
+  | _ => panic! "unknown eggxplosion configuration syntax"
+
+partial def Lean.TSyntax.getEggConfig : TSyntax `eggconfig → EggConfig
+  | `(eggconfig| $v:eggconfigval $r:eggconfig) => v.updateEggConfig r.getEggConfig
+  | `(eggconfig| $v:eggconfigval ) => v.updateEggConfig default
+  | _ => panic! "unknown eggxplosion config syntax"
+
+elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withMainContext do
   dbg_trace (s!"0) Running Egg on '{← getMainTarget}'")
   let decls : List LocalDecl := (← getLCtx).decls.toList.filter Option.isSome |>.map Option.get!
   let idsnames := decls.map λ decl => (repr decl.fvarId, decl.userName)
@@ -670,21 +698,25 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainC
     | .none => throwError "Egg: target not equality: {<- getMainTarget}"
     | .some eq => pure eq
 
-  let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites
+  let cfg : EggConfig := match c with
+    | none =>
+      dbg_trace "did not find config, using default"
+      default
+    | some cfgSyn => cfgSyn.getEggConfig
+  dbg_trace "using config: {repr cfg}"
+
+  let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites cfg
   dbg_trace "simplifying {(← exprToSexp goalLhs)} {(← exprToSexp goalRhs)} {rewrites}"
 
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
     (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   dbg_trace "simplification mapping {mapping}"
-  let time : Nat := match t with
-    | none => 3
-    | some tl => tl.getTimeLimit
   let eggRequest := {
     targetLhs := simplifiedLhs.toString,
     targetRhs := simplifiedRhs.toString,
     rewrites := simplifiedRewrites,
-    time := time,
+    time := cfg.time,
     varMapping := mapping
     : EggRequest
   }
@@ -695,7 +727,7 @@ elab "rawEgg" "[" rewriteNames:ident,* "]" t:(time_limit)? : tactic => withMainC
     let eggRewrite <-
       match rewrites.find? (fun rw => rw.name == e.rule) with
       | .some rw => pure rw
-      |  .none => throwTacticEx `rawEgg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      |  .none => throwTacticEx `eggxplosion (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
     dbg_trace (s!"14.6) found eggRewrite {eggRewrite}\n\twith rw {eggRewrite.rw} : {<- inferType eggRewrite.rw}")
     dbg_trace (s!"15) applying rewrite expression eggRewrite: {eggRewrite} to target: {<- getMainTarget}")
     -- let rwType <- e.instantiateTarget eggRewrite.rwType

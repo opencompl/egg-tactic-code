@@ -12,7 +12,7 @@ theorem inv_inv
   (invRight: forall (a: G), mul a (inv a) = one)
   (x: G)
   : (inv (inv x) = x) := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
 theorem inv_mul_cancel_left
   {G: Type}
@@ -26,7 +26,7 @@ theorem inv_mul_cancel_left
   (invRight: forall (a: G), mul a (inv a) = one)
   (x y : G)
   : (mul (inv x) (mul x y)) = y := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
 
 theorem mul_inv_cancel_left
@@ -41,7 +41,7 @@ theorem mul_inv_cancel_left
   (invRight: forall (a: G), one = mul a (inv a))
   (x y : G)
   : (mul x (mul (inv x) y)) = y := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
 
 theorem inv_mul
@@ -56,7 +56,8 @@ theorem inv_mul
   (invRight: forall (a: G), mul a (inv a) = one)
   (x y : G)
   : (inv (mul x y)) = (mul (inv y) (inv x)) := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight] (timeLimit := 100)
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight] (timeLimit := 5)
+
 
 theorem one_inv
   {G: Type}
@@ -70,6 +71,22 @@ theorem one_inv
   (invRight: forall (a: G), one = mul a (inv a))
   (x y : G)
   : (inv one) = one := by
-  rawEgg [assocMul, invLeft, mulOne, oneMul, invRight]
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
 #print inv_mul_cancel_left
+
+theorem test_simplification
+  {G: Type}
+  (inv: G → G)
+  (mul: G → G → G)
+  (one: G)
+  (assocMul: forall (a b c: G), mul a (mul b c) = (mul (mul a b) c))
+  (invLeft: forall (a: G), mul (inv a) a = one)
+  (mulOne: forall (a: G), a = mul a one)
+  (oneMul: forall (a: G), mul one a = a)
+  (invRight: forall (a: G), one = mul a (inv a))
+  (x y : G)
+  -- not equal terms, but simplies
+  : (inv (mul x (inv y))) = one := by
+  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
+
