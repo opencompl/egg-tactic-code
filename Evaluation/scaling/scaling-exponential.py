@@ -115,6 +115,10 @@ def find_repo(path):
 
 G_DATA_HEADER = ["tool", "problemsize", "time"]
 
+def G_STATS_FILENAME():
+    filename = os.path.basename(__file__).replace(".py", ".csv")
+    return filename
+
 def run(logging, cwd, rootdir):
     logging.debug("removing directory '" + str(cwd / "build") + "'")
     if (cwd / "build").exists(): shutil.rmtree(cwd / "build")
@@ -125,7 +129,7 @@ def run(logging, cwd, rootdir):
 
     N = 11 # failed at max. recursion depth exceeeded at N=9
 
-    with open(cwd / "stats.csv", "w") as OUTFILE:
+    with open(cwd / G_STATS_FILENAME(), "w") as OUTFILE:
         writer = csv.writer(OUTFILE)
         writer.writerow(G_DATA_HEADER)
         for i in range(1, N+1): # For Andres to count numbers (thanks <3!)
@@ -187,12 +191,12 @@ def plot(logging, cwd, rootdir):
     os.chdir(rootdir / "Evaluation" / "scaling")
     logging.debug(f"calling R for plotting")
     try:
-      subprocess.check_call(["Rscript", "plotscaling.R"])
+      subprocess.check_call(["Rscript", "plotscaling.R", G_STATS_FILENAME()])
       return
     except:
        logging.debug("fallback to matplotlib...")
-    logging.debug(f"opening stats.csv")
-    df = pd.read_csv(cwd / "stats.csv")
+    logging.debug(f"opening {G_STATS_FILENAME()}")
+    df = pd.read_csv(cwd / G_STATS_FILENAME())
     # df["time"].plot(kind="bar", legend=True)
     # plt.show()
     # print(df)
