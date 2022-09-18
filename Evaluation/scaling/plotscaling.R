@@ -17,11 +17,10 @@ stats <- filter(stats_raw, problemsize < 999999) %>%
 transform(time = time*10, tool=ifelse(tool=="lean-egg","eggxplosion",tool))
 stats$tool <- factor(stats$tool,levels=c("eggxplosion", "coq", "lean-simp"))
 
-
 p <- ggplot(data =stats, mapping = aes(x=`problemsize`, y =`time`, fill = `tool`))  +
   geom_col(mapping = aes(fill = `tool`), position=position_dodge2())  +
   xlab("problem size") +
-  ylab("time [s $\\cdot 10^{-1}$] (log)") + 
+  ylab("time [$\\cdot 10^{-1} s$] (log)") +
   #geom_text(mapping = aes(x = `problemsize`, y = 0.3, label = ifelse(is.na(`time`), "X", "")), position=position_dodge2())
   #geom_point() +
   #geom_line() +
