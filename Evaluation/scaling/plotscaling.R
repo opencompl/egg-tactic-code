@@ -14,8 +14,8 @@ stats_raw <- read_csv(args[1], col_types = cols(time = col_double()))
 # sort: ours first (for color scheme)
 
 stats <- filter(stats_raw, problemsize < 999999) %>%
-transform(time = time*10, tool=ifelse(tool=="lean-egg","eggxplosion",tool))
-stats$tool <- factor(stats$tool,levels=c("eggxplosion", "coq", "lean-simp"))
+transform(time = time*10, tool=ifelse(tool=="lean-egg","eggxplosion", ifelse(tool == "coq", "coq-congruence", tool)))
+stats$tool <- factor(stats$tool,levels=c("eggxplosion", "coq-congruence", "lean-simp"))
 
 p <- ggplot(data =stats, mapping = aes(x=`problemsize`, y =`time`, fill = `tool`))  +
   geom_col(mapping = aes(fill = `tool`), position=position_dodge2())  +
