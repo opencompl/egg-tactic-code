@@ -22,7 +22,7 @@ ggplot(mapping = aes(x=`problemsize`, y =`time`, color = `tool`, shape = `tool`)
   scale_y_log10() +
   scale_x_continuous(breaks = stats$problemsize) +
   theme_light() +
-  theme(legend.position = c(0.1,0.92),
+  theme(legend.position = c(0.1,0.90),
         legend.title = element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
