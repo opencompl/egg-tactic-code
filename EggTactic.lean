@@ -250,12 +250,12 @@ match n with
 def Lean.List.get? (as: List α) (n: Nat): Option α := lean_list_get? as n
 
 structure EggConfig where
-  explodeMVars : Bool
-  twoSided : Bool
-  time : Nat
-  deriving Repr
+  explodeMVars : Bool := true
+  twoSided : Bool := true
+  time : Nat := 9999
+  deriving Repr, Inhabited
 
-instance : Inhabited EggConfig where default := { explodeMVars := true, twoSided := true, time := 3}
+instance : Inhabited EggConfig where default := { }
 
 structure EggState where
   ix: Nat := 0
