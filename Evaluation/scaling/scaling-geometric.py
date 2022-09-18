@@ -161,6 +161,9 @@ def run(logging, cwd, rootdir):
     os.makedirs(cwd / "build" / "lean-simp", exist_ok=True)
     os.makedirs(cwd / "build" / "coq", exist_ok=True)
 
+    logging.debug("lake build")
+    command = ['lake', 'build']
+
     N = 15 # failed at max. recursion depth exceeeded at N=9
 
     with open(cwd / G_STATS_FILENAME(), "w") as OUTFILE:
