@@ -15,7 +15,7 @@ stats_raw <- read_csv(args[1], col_types = cols(time = col_double()))
 
 stats <- filter(stats_raw, problemsize < 999999) %>%
 transform(time = time*10, tool=ifelse(tool=="lean-egg","eggxplosion",tool))
-stats$tool <- factor(stats$tool,levels=c("eggxplosion","lean-simp","coq"))
+stats$tool <- factor(stats$tool,levels=c("eggxplosion", "coq", "lean-simp"))
 
 
 p <- ggplot(data =stats, mapping = aes(x=`problemsize`, y =`time`, fill = `tool`))  +
@@ -25,10 +25,10 @@ p <- ggplot(data =stats, mapping = aes(x=`problemsize`, y =`time`, fill = `tool`
   #geom_text(mapping = aes(x = `problemsize`, y = 0.3, label = ifelse(is.na(`time`), "X", "")), position=position_dodge2())
   #geom_point() +
   #geom_line() +
-  scale_y_log10() +
+  scale_y_log10(expand=expansion(mult=c(0,0.1))) + # No space below the bars but 10% above them; https://ggplot2.tidyverse.org/reference/expansion.html
   scale_x_continuous(breaks = stats$problemsize) +
-  theme_light() +
   scale_fill_brewer(palette="Set2")  +
+  theme_light() +                                                    
   theme(legend.position = c(0.1,0.90),
         legend.title = element_blank(),
         panel.grid.major.x = element_blank(),
