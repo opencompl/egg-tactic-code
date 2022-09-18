@@ -22,7 +22,11 @@ ggplot(mapping = aes(x=`problemsize`, y =`time`, color = `tool`, shape = `tool`)
   scale_y_log10() +
   scale_x_continuous(breaks = stats$problemsize) +
   theme_light() +
-  theme(legend.position = c(0.2,0.8), legend.title = element_blank()) 
+  theme(legend.position = c(0.1,0.92),
+        legend.title = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.background=element_blank())
 
 ggsave(fs::path_ext_set(args[1], "pdf"))
 ggsave(fs::path_ext_set(args[1], "png"))
