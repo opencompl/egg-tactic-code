@@ -1,0 +1,79 @@
+{
+    "timeout": 9999999,
+    "dump-graph": true,
+    "rewrites": [
+        {
+            "rhs": "one",
+            "lhs": "(mul ?a (inv ?a))",
+            "name": "19"
+        },
+        {
+            "rhs": "(mul y (inv y))",
+            "lhs": "one",
+            "name": "18"
+        },
+        {
+            "rhs": "(mul x (inv x))",
+            "lhs": "one",
+            "name": "16"
+        },
+        {
+            "rhs": "(mul one (inv one))",
+            "lhs": "one",
+            "name": "14"
+        },
+        {
+            "rhs": "(mul ?a one)",
+            "lhs": "?a",
+            "name": "12"
+        },
+        {
+            "rhs": "?a",
+            "lhs": "(mul ?a one)",
+            "name": "11"
+        },
+        {
+            "rhs": "(mul one ?a)",
+            "lhs": "?a",
+            "name": "10"
+        },
+        {
+            "rhs": "?a",
+            "lhs": "(mul one ?a)",
+            "name": "9"
+        },
+        {
+            "rhs": "one",
+            "lhs": "(mul (inv ?a) ?a)",
+            "name": "8"
+        },
+        {
+            "rhs": "(mul (inv y) y)",
+            "lhs": "one",
+            "name": "7"
+        },
+        {
+            "rhs": "(mul (inv x) x)",
+            "lhs": "one",
+            "name": "5"
+        },
+        {
+            "rhs": "(mul (inv one) one)",
+            "lhs": "one",
+            "name": "3"
+        },
+        {
+            "rhs": "(mul ?a (mul ?b ?c))",
+            "lhs": "(mul (mul ?a ?b) ?c)",
+            "name": "1"
+        },
+        {
+            "rhs": "(mul (mul ?a ?b) ?c)",
+            "lhs": "(mul ?a (mul ?b ?c))",
+            "name": "0"
+        }
+    ],
+    "target-rhs": "(mul (inv y) (inv x))",
+    "target-lhs": "(inv (mul x y))",
+    "request": "perform-rewrite"
+}

@@ -160,16 +160,19 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   let mvarid2expr ← mvarsJson.foldM (init := []) (fun out mvaridStr expr => do {
     let expr ← exceptToMetaM <| expr.getStr?
     let expr ← exceptToMetaM <| parseSingleSexp expr
+    let expr := curry expr
     let expr ← parseExprSexpr $ expr.unsimplify mapping
     let mvaridSexp ← exceptToMetaM <| parseSingleSexp mvaridStr
     return (mvaridSexp, expr) :: out
   })
   let result ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "result").getStr?
   let result ← exceptToMetaM <| (parseSingleSexp result)
+  let result := curry result
   let result ← parseExprSexpr $ result.unsimplify mapping
 
   let source ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "source").getStr?
   let source ← exceptToMetaM <| parseSingleSexp source
+  let source := curry source
   let source ← parseExprSexpr $ source.unsimplify mapping
 
   let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getNat?
@@ -255,7 +258,7 @@ structure EggConfig where
   explodeMVars : Bool := true
   twoSided : Bool := true
   dumpGraph : Bool := false
-  time : Nat := 9999
+  time : Nat := 5
   deriving Repr
 
 instance : Inhabited EggConfig where default := { }
@@ -609,9 +612,10 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
   let rewriteSexps := List.join $  rewrites.map  λ rw => [rw.lhs,rw.rhs]
   let (substituted, mapping) := simplifySexps $
     lhs :: rhs :: rewriteSexps
+  let uncurried := substituted.map uncurry
   Id.run do
     let mut resRewrites := []
-    let mut remaining := substituted.tail!.tail!
+    let mut remaining := uncurried.tail!.tail!
     for rw in rewrites do
       if let lhs::rhs::remaining' := remaining then
         resRewrites := resRewrites ++
@@ -623,7 +627,7 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
         remaining := remaining'
       else
         panic! "error unpacking rewrites"
-    return (substituted.head!, substituted.tail!.head!,resRewrites,mapping)
+    return (uncurried.head!, uncurried.tail!.head!,resRewrites,mapping)
 
 -- parse the response, given the response as a string
 def parseEggResponse (goal: MVarId) (varMapping : VariableMapping) (responseString: String) :
