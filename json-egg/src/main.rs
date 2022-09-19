@@ -60,7 +60,8 @@ enum Request {
         rewrites: Vec<RewriteStr>,
         target_lhs: String,
         target_rhs: String,
-        timeout : u64
+        timeout : u64,
+        dump_graph : bool
     }
 }
 
@@ -83,7 +84,8 @@ enum Response {
     PerformRewrite {
         success: bool,
         // TODO: how does one use Sexp?
-        explanation: Vec<LeanRewriteInfo>
+        explanation: Vec<LeanRewriteInfo>,
+        stop_reason : String
     },
     Error { error: String }
 }
@@ -365,7 +367,7 @@ pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
 
 fn handle_request(req: Request) -> Response {
     match req {
-        Request::PerformRewrite { rewrites, target_lhs, target_rhs , timeout} => {
+        Request::PerformRewrite { rewrites, target_lhs, target_rhs , timeout, dump_graph} => {
 
             let mut new_rewrites = vec![];
             for rw in rewrites {
@@ -384,9 +386,9 @@ fn handle_request(req: Request) -> Response {
             //.with_scheduler(scheduler::BoundedGraphScheduler::default())
             //.with_scheduler(BackoffScheduler::default().with_initial_match_limit(8))
             //.with_scheduler(SimpleScheduler)
-            .with_node_limit(99999)
+            .with_node_limit(999999)
             .with_time_limit(Duration::from_secs(timeout))
-            .with_iter_limit(99999)
+            .with_iter_limit(999999)
             .with_egraph(graph)
             .with_explanations_enabled()
             .with_hook(move |runner| {
@@ -400,7 +402,9 @@ fn handle_request(req: Request) -> Response {
             })
             .run(&new_rewrites);
 
-            //runner.egraph.dot().to_pdf("egraph_dump.pdf").unwrap();
+            if dump_graph{
+                  runner.egraph.dot().to_dot("egraph_dump.dot").unwrap();
+            }
             // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
             if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
@@ -413,7 +417,7 @@ fn handle_request(req: Request) -> Response {
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
                 let explanation = build_proof(new_rewrites, flat_explanation);
-                Response::PerformRewrite { success: true, explanation: explanation }
+                Response::PerformRewrite { success: true, explanation: explanation, stop_reason : "proof found".to_string() }
             } else {
                 let extractor = Extractor::new(&runner.egraph, AstSize);
                 let (_, bestlhs) = extractor.find_best(lhs_id);
@@ -431,7 +435,7 @@ fn handle_request(req: Request) -> Response {
                 // let mut rules : Vec<Vec<String>> = Vec::new();
                 let mut explanation= build_proof(new_rewrites.clone(), flat_explanation_lhs);
                 explanation.append(&mut build_proof(new_rewrites, flat_explanation_rhs));
-                Response::PerformRewrite { success: false, explanation: explanation}
+                Response::PerformRewrite { success: false, explanation: explanation, stop_reason : format!("{:?}",runner.stop_reason)}
                 //Response::Error {error: format!("no rewrite found! reason: {:?}", runner.stop_reason) }
 
             }

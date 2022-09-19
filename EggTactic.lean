@@ -219,6 +219,7 @@ structure EggRequest where
   varMapping : VariableMapping
   rewrites: List EggRewrite
   time : Nat
+  dumpGraph : Bool
 
 def EggRequest.toJson (e: EggRequest): String :=
   "{"
@@ -226,7 +227,8 @@ def EggRequest.toJson (e: EggRequest): String :=
   ++ surroundQuotes "target-lhs"  ++  ":" ++ surroundQuotes (e.targetLhs) ++ ","
   ++ surroundQuotes "target-rhs"  ++  ":" ++ surroundQuotes (e.targetRhs) ++ ","
   ++ surroundQuotes "rewrites" ++ ":" ++ "[" ++ String.intercalate "," (e.rewrites.map EggRewrite.toJson) ++ "]" ++ ","
-  ++ surroundQuotes "timeout" ++ ":" ++ toString e.time
+  ++ surroundQuotes "timeout" ++ ":" ++ toString e.time ++ ","
+  ++ surroundQuotes "dump-graph" ++ ":" ++ toString e.dumpGraph
   ++ "}"
 
 def Lean.Json.getStr! (j: Json): String :=
@@ -252,8 +254,9 @@ def Lean.List.get? (as: List α) (n: Nat): Option α := lean_list_get? as n
 structure EggConfig where
   explodeMVars : Bool := true
   twoSided : Bool := true
+  dumpGraph : Bool := false
   time : Nat := 9999
-  deriving Repr, Inhabited
+  deriving Repr
 
 instance : Inhabited EggConfig where default := { }
 
@@ -277,8 +280,6 @@ def withExprsOfType (g: MVarId) (t : Expr) (f: Expr → EggM Unit): EggM Unit :=
     for ldecl in lctx do
       let ldecl_type <- inferType ldecl.toExpr
       if (← isExprDefEq ldecl_type t) then f ldecl.toExpr
-
-
 
 instance : ToString EggState where
   toString expl :=
@@ -465,8 +466,6 @@ def addForallMVarEquality (rw: Expr) (ty: Expr): EggM Unit := do
     addBareEquality rwApplied rw  tyNoForall ty mvIds Backward
   else if !(rhsVars.isSubsetOf lhsVars) then
     throwError "error adding {rw}, neither side's variables are a subset of the other: LHS : {lhs} ({lhsVars}), RHS: {rhs} ({rhsVars})"
-
-
 
 --  explode an equality with ∀ by creating many variations, from the local context.
 -- It is well founded because we destructure the inductive type, but lean is unable to
@@ -673,6 +672,7 @@ declare_syntax_cat eggconfig
 
 syntax "(" "timeLimit" ":=" num ")" : eggconfigval
 syntax "noInstantiation" : eggconfigval
+syntax "dump" : eggconfigval
 syntax "oneSided" : eggconfigval
 syntax eggconfigval eggconfig : eggconfig
 syntax eggconfigval : eggconfig
@@ -680,6 +680,7 @@ syntax eggconfigval : eggconfig
 def Lean.TSyntax.updateEggConfig : TSyntax `eggconfigval → EggConfig → EggConfig
   | `(eggconfig| noInstantiation ) => λ cfg => { cfg with explodeMVars := false }
   | `(eggconfig| oneSided ) =>  λ cfg => { cfg with twoSided := false }
+  | `(eggconfig| dump ) =>  λ cfg => { cfg with dumpGraph := true }
   | `(eggconfig| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
   | _ => panic! "unknown eggxplosion configuration syntax"
 
@@ -717,6 +718,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
     targetRhs := simplifiedRhs.toString,
     rewrites := simplifiedRewrites,
     time := cfg.time,
+    dumpGraph := cfg.dumpGraph,
     varMapping := mapping
     : EggRequest
   }
