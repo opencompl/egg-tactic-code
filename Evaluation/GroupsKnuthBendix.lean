@@ -58,6 +58,7 @@ theorem inv_mul
   : (inv (mul x y)) = (mul (inv y) (inv x)) := by
   eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight] (timeLimit := 5)
 
+#print inv_mul
 
 theorem one_inv
   {G: Type}

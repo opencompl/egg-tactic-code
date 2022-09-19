@@ -246,20 +246,35 @@ def freshVar (vars : List String) : String := Id.run do
     fresh := s!"v{idx}"
   return fresh
 
-def uncurry : Sexp → Sexp
+
+def Sexp.head : Sexp → String
+  | .atom s => s
+  | .list [] => ""
+  | .list (hd::_) => head hd
+
+def Sexp.uncurry : Sexp → Sexp
   | a@(.atom _) => a
   | .list ["ap", fterm, argterm] => Sexp.list [uncurry fterm, uncurry argterm]
   | .list [fterm] => Sexp.list [uncurry fterm]
   | l@(.list _) => l
 
-#eval uncurry (parseSingleSexp "(ap (ap v9 v6) (ap v7 v6))" |>.toOption |>.get!) |>.toString
+partial def Sexp.uncurry' : Sexp → Sexp
+  | a@(.atom _) => a
+  | .list (.atom "ap"::rest) => .list (.atom "ap"::(rest.map Sexp.uncurry))
+  | .list args => .list (args.map Sexp.uncurry')
+
+#eval Sexp.uncurry' (parseSingleSexp "(ap (ap v9 v6) (ap v7 v6))" |>.toOption |>.get!) |>.toString
 
 -- partial because of map..
-partial def curry : Sexp → Sexp
+partial def Sexp.curry : Sexp → Sexp
   | a@(.atom _) => a
   | Sexp.list [fterm, argterm] => .list ["ap", curry fterm, curry argterm]
   | .list args => .list (args.map curry)
 
+partial def Sexp.curry' : Sexp → Sexp
+  | a@(.atom _) => a
+  | .list (.atom "ap"::rest) => .list (.atom "ap"::(rest.map curry))
+  | .list args => .list (args.map Sexp.curry')
 
 def simplifySexps : List Sexp → List Sexp × VariableMapping
   | sexps =>
@@ -313,13 +328,11 @@ def a := Sexp.atom "a"
 def realexample := parseSexpList "(ap (fvar (num (str anonymous _uniq) 547)) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) (fvar (num (str anonymous _uniq) 550)) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (fvar (num (str anonymous _uniq) 550))) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550)))) ?_uniq.562 (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.562) (fvar (num (str anonymous _uniq) 549))) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (fvar (num (str anonymous _uniq) 547)) ?_uniq.561)) ?_uniq.561) (fvar (num (str anonymous _uniq) 549)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.559) ?_uniq.560)) (ap (ap (fvar (num (str anonymous _uniq) 548)) (ap (ap (fvar (num (str anonymous _uniq) 548)) ?_uniq.558) ?_uniq.559)) ?_uniq.560)" |>.toOption.get!
 def realexampleSimplified := simplifySexps realexample
 #eval realexampleSimplified.1.toString
-#eval realexampleSimplified.1.map (λ e => curry $ uncurry e) |>.map toString
-#eval (realexampleSimplified.1.map (λ e => curry $ uncurry e) |>.zip realexampleSimplified.1).map λ (a,b) => a == b
+#eval realexampleSimplified.1.map (λ e => e.uncurry' ) |>.map toString
+#eval (realexampleSimplified.1.map (λ e => e.uncurry'.curry') |>.zip realexampleSimplified.1).map λ (a,b) => a == b
 
-#eval realexampleSimplified.1.map uncurry |>.map toString
 #eval realexampleSimplified.2.map λ (s,sexp) => (s,sexp.toString)
 #eval realexampleSimplified.1.map (Sexp.unsimplify · realexampleSimplified.2) |>.zip realexample |>.map λ (a,b) => a == b
-#eval (realexampleSimplified.1.map uncurry).map (λ e => Sexp.unsimplify (uncurry e) realexampleSimplified.2) |>.zip realexample -- |>.map λ (a,b) => a == b
 def exp1 := parseSexpList "(a (a b)) (b (a b))" |>.toOption |>.get!
 def exp2 := parseSexpList "(c (a b)) ((a b) c)" |>.toOption |>.get!
 def exp3 := parseSexpList "(d ((a b) c)) (((a b) c) d)" |>.toOption |>.get!
