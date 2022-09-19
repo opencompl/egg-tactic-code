@@ -99,7 +99,7 @@ def count_program_lean(n: int, tactic_name: str):
     out = """
 import EggTactic
 set_option maxRecDepth 20000
-
+set_option maxHeartbeats 50000000
 inductive B where -- bit
 | O : B
 | I : B
@@ -164,7 +164,7 @@ def run(logging, cwd, rootdir):
     logging.debug("lake build")
     command = ['lake', 'build']
 
-    N = 15 # failed at max. recursion depth exceeeded at N=9
+    N = 20 # failed at max. recursion depth exceeeded at N=9
 
     with open(cwd / G_STATS_FILENAME(), "w") as OUTFILE:
         writer = csv.writer(OUTFILE)
