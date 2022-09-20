@@ -66,7 +66,7 @@ def count_program_coq_congruence(ndigits: int, radix: int):
             out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
             out += ")\n" # rule
     out += "\n, count " + (f"B{radix-2} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
-    out += "Proof. intros. timeout 10 (congruence 999999). Qed.\n";
+    out += "Proof. intros. timeout 60 (congruence 999999). Qed.\n";
     return out
 
 def count_program_coq_autorewrite(ndigits: int, radix: int):
@@ -181,7 +181,7 @@ def run(logging, cwd, rootdir):
 
     setup_run(logging, cwd, rootdir)
 
-    N = 11 
+    N = 60
     NDIGITS=3
 
     with open(cwd / G_STATS_FILENAME(), "w") as OUTFILE:
@@ -370,4 +370,4 @@ if __name__ == "__main__":
     if args.plot:
         plot(logging=logging,cwd=cwd,rootdir=rootdir)
 
-    print("NOTE: we have a timeout of 10 seconds for congruence")
+    print("NOTE: we have a timeout of 60 seconds for congruence")
