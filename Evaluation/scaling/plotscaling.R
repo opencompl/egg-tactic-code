@@ -32,7 +32,7 @@ p <- ggplot(data =stats, mapping = aes(x=`count_to`, y =`time`, fill = `tool`)) 
   scale_fill_brewer(palette="Set2")  +
   scale_color_brewer(palette="Set2")  +
   theme_light() +                                                    
-  theme(legend.position = c(0.1,0.90),
+  theme(legend.position = c(0.1,0.84),
         legend.title = element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
