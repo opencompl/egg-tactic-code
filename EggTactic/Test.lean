@@ -12,8 +12,9 @@ theorem testInstantiation
   -- TODO: need to change definitions to make all arguments implicit, since those are the only kinds of rewrites
   -- egg can cope with!
   (group_inv: forall {g: Int}, g - g  = 0)
-  (h: Int) (k: Int): h - h = k - k := by
- eggxplosion [group_inv]
+  (h: Int) (k: Int): h - h = k - k := by {
+ eggxplosion [group_inv] noInstantiation;
+}
 
 
 #print testInstantiation
