@@ -57,9 +57,7 @@ def num_to_IO(n: int, ndigits: int):
     out.reverse()
     assert len(out) == ndigits
     return out
-
-
-def count_program_coq(n: int):
+def count_program_coq_congruence(n: int):
     out = ""
     out += "Inductive B := O | I.\n"
     out += f"Theorem count_upward_{n}: forall"
@@ -91,7 +89,41 @@ def count_program_coq(n: int):
     out += "\n,  " + "count " + " ".join(num_to_IO(min(2**n-1, n*n), ndigits=n)) + " = " + "count " + " ".join(num_to_IO(0, ndigits=n)) + "."
     out += "\nProof. intros. congruence. Qed.\n";
     return out
-    
+
+def count_program_coq_autorewrite(n: int):
+    out = ""
+    out += "Inductive B := O | I.\n"
+    out += f"\n Parameter count: " + ("B ->" * n) + "B" + "."
+    for i in range(1, n+1):
+        # [n-1, i): universally quantified
+        # [i]: O
+        # [i-1, 0): I
+        out += f"\nAxiom count_{i}:"
+        univ_vars = [f"b{i}" for i in list(range(n, i, -1))]
+        if univ_vars:
+            out += "forall (" +  " ".join (univ_vars) + ": B), "
+
+        # lhs
+        out += "count "
+        out += " ".join(univ_vars)
+        out += " O"; # i
+        out += " I" * ((i - 1) - 0)
+
+        out += " = "
+
+        # lhs
+        out += "count "
+        out += " ".join(univ_vars)
+        out += " I"; # i
+        out += " O" * ((i - 1) - 0)
+
+        out += "." # rule
+        out += "\nGlobal Hint Rewrite " + f"count_{i}"  " : base0."
+
+    out += f"\nTheorem count_upward_{n}: "
+    out += "\n  " + "count " + " ".join(num_to_IO(min(2**n-1, n*n), ndigits=n)) + " = " + "count " + " ".join(num_to_IO(0, ndigits=n)) + "."
+    out += "\nProof. intros. autorewrite with base0. reflexivity. Qed.\n";
+    return out
 
 #N : number of bits
 # tactic name is (simp|eggxplosion)
@@ -159,7 +191,10 @@ def run(logging, cwd, rootdir):
     logging.debug("making test dirs")
     os.makedirs(cwd / "build" / "lean-egg", exist_ok=True)
     os.makedirs(cwd / "build" / "lean-simp", exist_ok=True)
-    os.makedirs(cwd / "build" / "coq", exist_ok=True)
+    os.makedirs(cwd / "build" / "coq-autorewrite", exist_ok=True)
+    os.makedirs(cwd / "build" / "coq-congruence", exist_ok=True)
+    errored_out = { 'lean-egg' : False, 'lean-simp' : False,
+                    'coq-autorewrite' : False, 'coq-congruence' : False}
 
     logging.debug("lake build")
     command = ['lake', 'build']
@@ -171,58 +206,91 @@ def run(logging, cwd, rootdir):
         writer.writerow(G_DATA_HEADER)
         for i in range(1, N+1): # For Andres to count numbers (thanks <3!)
             logging.debug(f"Generating ({i}/{N})")
-            # LEAN egg runner
-            testpath = cwd / "build" / "lean-egg" / f"n{i}.lean"
-            with open(testpath, "w") as f:
-                f.write(count_program_lean(i, "eggxplosion"))
-            os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
-            logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
-            command = ['lean', testpath]
-            start = timer()
-            try:
-              subprocess.check_call(command)
-              end = timer()
-              row = ["lean-egg", i, str(end - start)]
-            except:
-              row = ["lean-egg", i, "ERR"]
-            assert len(row) == len(G_DATA_HEADER)
-            logging.debug(row)
-            writer.writerow(row)
-            OUTFILE.flush(); os.fsync(OUTFILE)
+            if errored_out['lean-egg'] :
+              logging.debug(f"Skipping lean-egg")
+            else:
+              # LEAN egg runner
+              testpath = cwd / "build" / "lean-egg" / f"n{i}.lean"
+              with open(testpath, "w") as f:
+                  f.write(count_program_lean(i, "eggxplosion"))
+              os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
+              logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
+              command = ['lean', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["lean-egg", i, str(end - start)]
+              except:
+                row = ["lean-egg", i, "ERR"]
+                errored_out['lean-egg'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
             # LEAN simp runner
-            testpath = cwd / "build" / "lean-simp" / f"n{i}.lean"
-            with open(testpath, "w") as f:
-                f.write(count_program_lean(i, "simp"))
-            os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
-            logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
-            command = ['lean', testpath]
-            start = timer()
-            try:
-              subprocess.check_call(command)
-              end = timer()
-              row = ["lean-simp", i, str(end - start)]
-            except:
-              row = ["lean-simp", i, "ERR"]
-            assert len(row) == len(G_DATA_HEADER)
-            logging.debug(row)
-            writer.writerow(row)
-            OUTFILE.flush(); os.fsync(OUTFILE)
-            # COQ runner
-            testpath = cwd / "build" / "coq" / f"n{i}.v"
-            with open(testpath, "w") as f:
-                f.write(count_program_coq(i))
-            command = ['coqc', testpath]
-            start = timer()
-            try:
-              subprocess.check_call(command)
-              end = timer()
-              row = ["coq", i, str(end - start)]
-            except:
-              row = ["coq", i, "ERR"]
-            assert len(row) == len(G_DATA_HEADER)
-            logging.debug(row)
-            writer.writerow(row)
-            OUTFILE.flush(); os.fsync(OUTFILE)
+            if errored_out['lean-simp'] :
+              logging.debug("Skipping lean-simp")
+            else:
+              testpath = cwd / "build" / "lean-simp" / f"n{i}.lean"
+              with open(testpath, "w") as f:
+                  f.write(count_program_lean(i, "simp"))
+              os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
+              logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
+              command = ['lean', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["lean-simp", i, str(end - start)]
+              except:
+                row = ["lean-simp", i, "ERR"]
+                errored_out['lean-simp'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
+            # COQ congruence runner
+            if errored_out['coq-congruence']:
+              logging.debug('Skipping coq-congruence')
+            else:
+              testpath = cwd / "build" / "coq-congruence" / f"n{i}.v"
+              with open(testpath, "w") as f:
+                  f.write(count_program_coq_congruence(i))
+              command = ['coqc', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["coq-congruence", i, str(end - start)]
+              except:
+                row = ["coq-congruence", i, "ERR"]
+                errored_out['coq-congruence'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
+            # COQ autorewrite runner
+            if errored_out['coq-autorewrite']:
+              logging.debug("Skpping coq-autorewrite")
+            else:
+              testpath = cwd / "build" / "coq-autorewrite" / f"n{i}.v"
+              with open(testpath, "w") as f:
+                  f.write(count_program_coq_autorewrite(i))
+              command = ['coqc', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["coq-autorewrite", i, str(end - start)]
+              except:
+                row = ["coq-autorewrite", i, "ERR"]
+                errored_out['coq-autorewrite'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
+
 
 def plot(logging, cwd, rootdir):
     os.chdir(rootdir / "Evaluation" / "scaling")
