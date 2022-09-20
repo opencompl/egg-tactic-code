@@ -682,11 +682,11 @@ syntax eggconfigval eggconfig : eggconfig
 syntax eggconfigval : eggconfig
 
 def Lean.TSyntax.updateEggConfig : TSyntax `eggconfigval → EggConfig → EggConfig
-  | `(eggconfig| noInstantiation ) => λ cfg => { cfg with explodeMVars := false }
-  | `(eggconfig| oneSided ) =>  λ cfg => { cfg with twoSided := false }
-  | `(eggconfig| dump ) =>  λ cfg => { cfg with dumpGraph := true }
-  | `(eggconfig| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
-  | _ => panic! "unknown eggxplosion configuration syntax"
+  | `(eggconfigval| noInstantiation ) => λ cfg => { cfg with explodeMVars := false }
+  | `(eggconfigval| oneSided ) =>  λ cfg => { cfg with twoSided := false }
+  | `(eggconfigval| dump ) =>  λ cfg => { cfg with dumpGraph := true }
+  | `(eggconfigval| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
+  | stx => panic! s!"unknown eggxplosion configuration syntax {stx}"
 
 partial def Lean.TSyntax.getEggConfig : TSyntax `eggconfig → EggConfig
   | `(eggconfig| $v:eggconfigval $r:eggconfig) => v.updateEggConfig r.getEggConfig
