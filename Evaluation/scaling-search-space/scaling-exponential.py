@@ -47,7 +47,7 @@ def count_program_coq(nplaces: int, radix: int):
             out += " = "
             out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
             out += ")" # rule
-    out += "\n,  " + "count " + ("B0 " * nplaces) + " = " + "count " + (f" B{max(0, radix-1)}" * nplaces) + "."
+    out += "\n,  " + "count " + (f"B{radix-2} " * nplaces) + " = " + "count " + (f"B{max(0, radix-1)} " * nplaces) + "."
     out += "\nProof. intros. timeout 10 (congruence 9999999). Qed.\n";
     return out
     
@@ -91,7 +91,7 @@ inductive B where -- digit\n
             out += " = "
             out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
             out += ")" # rule
-    out += "\n  : " + "count " + (f"B0 " * nplaces) + " = " + "count " + (f" B{max(0, radix-1)}" * nplaces)
+    out += "\n  : " + "count " + (f"B{radix-2} " * nplaces) + " = " + "count " + (f"B{radix-1} " * nplaces)
     out += ":= by {"
     out += tactic_name + "["+ ", ".join([f"count_{i}_{r}" for i in range(1, nplaces+1) for r in range(0, radix-1)]) + "]";
     out += "}"
