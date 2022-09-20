@@ -42,7 +42,7 @@ def num_to_IO(n: int, ndigits: int):
     return out
 
 
-def count_program_coq_congruence(ndigits: int, radix: int):
+def count_program_coq_congruence(ndigits: int, radix: int, time_limit: int):
     assert radix >= 2
     assert ndigits >= 1
     out = ""
@@ -65,11 +65,11 @@ def count_program_coq_congruence(ndigits: int, radix: int):
             out += " = "
             out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
             out += ")\n" # rule
-    out += "\n, count " + (f"B{radix-2} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
-    out += "Proof. intros. timeout 60 (congruence 999999). Qed.\n";
+    out += "\n, count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
+    out += f"Proof. intros. timeout {time_limit} (congruence 999999). Qed.\n";
     return out
 
-def count_program_coq_autorewrite(ndigits: int, radix: int):
+def count_program_coq_autorewrite(ndigits: int, radix: int, time_limit: int):
     assert radix >= 2
     assert ndigits >= 1
     out = ""
@@ -94,11 +94,11 @@ def count_program_coq_autorewrite(ndigits: int, radix: int):
             out += "Global Hint Rewrite " + f"count_{i}_{r}"  " : base0.\n"
 
     out += f"Theorem count_upward_{ndigits}: "
-    out += "count " + (f"B{radix-2} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
-    out += "Proof. intros. autorewrite with base0. reflexivity. Qed.\n";
+    out += "count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
+    out += f"Proof. intros. timeout {time_limit} (autorewrite with base0). reflexivity. Qed.\n";
     return out
 
-def count_program_lean(ndigits: int, radix: int, tactic_name: str):
+def count_program_lean(ndigits: int, radix: int, tactic_name: str, time_limit: int):
     """
     ndigits: number of places to keep your digits. 
     radix: base of the number system (binary, ternary, quaternary, ...)
@@ -135,9 +135,11 @@ inductive B where -- digit\n
             out += " = "
             out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
             out += ")" # rule
-    out += "\n  : " + "count " + (f"B0 " * ndigits) + " = " + "count " + (f" B{max(0, radix-1)}" * ndigits)
+    out += "\n  : " + "count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f" B{max(0, radix-1)}" * ndigits)
     out += ":= by {"
     out += tactic_name + "["+ ", ".join([f"count_{i}_{r}" for i in range(1, ndigits+1) for r in range(0, radix-1)]) + "]";
+    # bollu: hack :( 
+    if tactic_name == "eggxplosion": out += f" noInstantiation oneSided (timeLimit := {time_limit})" 
     out += "}"
     return out
 
@@ -181,13 +183,14 @@ def run(logging, cwd, rootdir):
 
     setup_run(logging, cwd, rootdir)
 
-    N = 60
-    NDIGITS=3
+    N = 120; NSTEP = 5;
+    NDIGITS=2
+    TIMELIMIT=30
 
     with open(cwd / G_STATS_FILENAME(), "w") as OUTFILE:
         writer = csv.writer(OUTFILE)
         writer.writerow(G_DATA_HEADER)
-        for i in range(2, N+1): # Radix begins at 2 (binary)
+        for i in range(NSTEP, N+1, NSTEP): # Radix begins at 2 (binary)
             logging.debug(f"Generating ({i}/{N})")
             if errored_out['lean-egg'] :
               logging.debug(f"Skipping lean-egg")
@@ -195,7 +198,7 @@ def run(logging, cwd, rootdir):
               # LEAN egg runner
               testpath = cwd / "build" / "lean-egg" / f"n{i}.lean"
               with open(testpath, "w") as f:
-                  f.write(count_program_lean(ndigits=NDIGITS, radix=i, tactic_name="eggxplosion"))
+                  f.write(count_program_lean(ndigits=NDIGITS, radix=i, tactic_name="eggxplosion", time_limit=TIMELIMIT))
               os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
               logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
               command = ['lean', testpath]
@@ -217,7 +220,7 @@ def run(logging, cwd, rootdir):
             else:
               testpath = cwd / "build" / "lean-simp" / f"n{i}.lean"
               with open(testpath, "w") as f:
-                  f.write(count_program_lean(ndigits=NDIGITS, radix=i, tactic_name="simp"))
+                  f.write(count_program_lean(ndigits=NDIGITS, radix=i, tactic_name="simp", time_limit=TIMELIMIT))
               os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
               logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
               command = ['lean', testpath]
@@ -239,7 +242,7 @@ def run(logging, cwd, rootdir):
             else:
               testpath = cwd / "build" / "coq-congruence" / f"n{i}.v"
               with open(testpath, "w") as f:
-                  f.write(count_program_coq_congruence(ndigits=NDIGITS, radix=i))
+                  f.write(count_program_coq_congruence(ndigits=NDIGITS, radix=i, time_limit=TIMELIMIT))
               command = ['coqc', testpath]
               start = timer()
               try:
@@ -259,7 +262,7 @@ def run(logging, cwd, rootdir):
             else:
               testpath = cwd / "build" / "coq-autorewrite" / f"n{i}.v"
               with open(testpath, "w") as f:
-                  f.write(count_program_coq_autorewrite(ndigits=NDIGITS, radix=i))
+                  f.write(count_program_coq_autorewrite(ndigits=NDIGITS, radix=i, time_limit=TIMELIMIT))
               command = ['coqc', testpath]
               start = timer()
               try:
@@ -370,4 +373,4 @@ if __name__ == "__main__":
     if args.plot:
         plot(logging=logging,cwd=cwd,rootdir=rootdir)
 
-    print("NOTE: we have a timeout of 60 seconds for congruence")
+    print("NOTE: we have a timeout of 10 seconds for congruence")
