@@ -472,45 +472,6 @@ fn main_json() -> io::Result<()> {
     Ok(())
 }
 
-impl<SymbolLang: FromOp> FromStr for RecExpr {
-    type Err = RecExprParseError<SymbolLang::Error>;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use RecExprParseError::*;
-
-        fn parse_sexp_into<L: FromOp>(
-            sexp: &Sexp,
-            expr: &mut RecExpr,
-        ) -> Result<Id, RecExprParseError<SymbolLang::Error>> {
-            match sexp {
-                Sexp::Empty => Err(EmptySexp),
-                Sexp::String(s) => {
-                    let node = L::from_op(s, vec![]).map_err(BadOp)?;
-                    Ok(expr.add(node))
-                }
-                Sexp::List(list) if list.is_empty() => Err(EmptySexp),
-                Sexp::List(list) => match &list[0] {
-                    Sexp::Empty => unreachable!("Cannot be in head position"),
-                    list @ Sexp::List(..) => Err(HeadList(list.to_owned())),
-                    Sexp::String(op) => {
-                        let arg_ids: Vec<Id> = list[1..]
-                            .iter()
-                            .map(|s| parse_sexp_into(s, expr))
-                            .collect::<Result<_, _>>()?;
-                        let node = L::from_op(op, arg_ids).map_err(BadOp)?;
-                        Ok(expr.add(node))
-                    }
-                },
-            }
-        }
-
-        let mut expr = RecExpr::default();
-        let sexp = symbolic_expressions::parser::parse_str(s.trim()).map_err(BadSexp)?;
-        parse_sexp_into(&sexp, &mut expr)?;
-        Ok(expr)
-    }
-}
-
 fn main() {
     // mainJson();
     main_json().unwrap();
