@@ -39,7 +39,7 @@ impl<L: Language> CostFunction<L> for AstSizeFive {
         C: FnMut(Id) -> <egg::AstSize as CostFunction<L>>::Cost,
     {
         let tot_size = enode.fold(1, |sum, id| sum + costs(id));
-        println!("tot_size: {}",tot_size);
+        eprintln!("tot_size: {}",tot_size);
         if tot_size == 5 {1} else {100}
     }
 }
@@ -236,7 +236,7 @@ fn check_lhs(
         ENodeOrVar::ENode(node) => {
             // The node must match the rewrite or the proof is invalid.
 
-            println!("checking {}({}).matches({})({})? {}", node, node.len(), lhs_node, lhs_node.len(), node.matches(lhs_node));
+            eprintln!("checking {}({}).matches({})({})? {}", node, node.len(), lhs_node, lhs_node.len(), node.matches(lhs_node));
             return node.matches(lhs_node);
         }
     }
@@ -368,7 +368,7 @@ pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
 fn handle_request(req: Request) -> Response {
     match req {
         Request::PerformRewrite { rewrites, target_lhs, target_rhs , timeout, dump_graph} => {
-            println!("DEBUG: starting rewrites");
+            eprintln!("DEBUG: starting rewrites");
 
             let mut new_rewrites = vec![];
             for rw in rewrites {
@@ -403,9 +403,9 @@ fn handle_request(req: Request) -> Response {
             });
 
 
-            println!("DEBUG: saturating...");
+            eprintln!("DEBUG: saturating...");
             runner = runner.run(&new_rewrites);
-            println!("DEBUG:saturated!");
+            eprintln!("DEBUG:saturated!");
 
             if dump_graph{
                   runner.egraph.dot().to_dot("egraph_dump.dot").unwrap();
@@ -416,20 +416,20 @@ fn handle_request(req: Request) -> Response {
             // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
             if egraph.find(lhs_id) ==  egraph.find(rhs_id) {
-                 println!("DEBUG: found equivalence");
-                 println!("DEBUG: explaining equivalence...");
+                 eprintln!("DEBUG: found equivalence");
+                 eprintln!("DEBUG: explaining equivalence...");
                 let mut explanation : Explanation<SymbolLang> = egraph.explain_equivalence(&target_lhs_expr,
                     & target_rhs_expr);
-                 println!("DEBUG: making flat explanation....");
+                 eprintln!("DEBUG: making flat explanation....");
                 let flat_explanation : &FlatExplanation =
                     explanation.make_flat_explanation();
 
                 // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
-                 println!("DEBUG: building proof...");
+                 eprintln!("DEBUG: building proof...");
                 let explanation = build_proof(new_rewrites, flat_explanation);
-                 println!("returning proof");
+                 eprintln!("returning proof");
                 Response::PerformRewrite { success: true, explanation: explanation, stop_reason : "proof found".to_string() }
             } else {
                 let extractor = Extractor::new(&egraph, AstSize);
