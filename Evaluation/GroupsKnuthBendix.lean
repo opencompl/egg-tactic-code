@@ -76,6 +76,7 @@ theorem one_inv
 
 #print inv_mul_cancel_left
 
+/-
 theorem test_simplification
   {G: Type}
   (inv: G → G)
@@ -91,3 +92,6 @@ theorem test_simplification
   : (inv (mul x (inv y))) = one := by
   eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
+
+#print test_simplification
+-/
