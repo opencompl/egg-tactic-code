@@ -2,6 +2,8 @@
     "request": "perform-rewrite",
     "target-lhs": "(^-1 (^-1 a))",
     "target-rhs": "a",
+    "timeout": 10,
+    "dump-graph": false,
     "rewrites": [
         {"name": "assoc-mul", "lhs": "(* ?a (* ?b ?c))" , "rhs": "(* (* ?a ?b) ?c)"},
         {"name": "inv-left", "lhs":  "(* (^-1 ?a) ?a)" , "rhs": "1"},

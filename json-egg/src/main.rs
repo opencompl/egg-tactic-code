@@ -368,6 +368,7 @@ pub fn build_proof(rules: Vec<Rewrite>, flat_explanation: &FlatExplanation) -> V
 fn handle_request(req: Request) -> Response {
     match req {
         Request::PerformRewrite { rewrites, target_lhs, target_rhs , timeout, dump_graph} => {
+            println!("DEBUG: starting rewrites");
 
             let mut new_rewrites = vec![];
             for rw in rewrites {
@@ -386,9 +387,9 @@ fn handle_request(req: Request) -> Response {
             //.with_scheduler(scheduler::BoundedGraphScheduler::default())
             //.with_scheduler(BackoffScheduler::default().with_initial_match_limit(8))
             //.with_scheduler(SimpleScheduler)
-            .with_node_limit(999999)
+            .with_node_limit(10000)
             .with_time_limit(Duration::from_secs(timeout))
-            .with_iter_limit(999999)
+            .with_iter_limit(10000)
             .with_egraph(graph)
             .with_explanations_enabled()
             .with_hook(move |runner| {
@@ -399,38 +400,50 @@ fn handle_request(req: Request) -> Response {
                     Result::Ok(())
                 }
 
-            })
-            .run(&new_rewrites);
+            });
+
+
+            println!("DEBUG: saturating...");
+            runner = runner.run(&new_rewrites);
+            println!("DEBUG:saturated!");
 
             if dump_graph{
                   runner.egraph.dot().to_dot("egraph_dump.dot").unwrap();
             }
+            //
+            let mut egraph = runner.egraph;
+            egraph = egraph.without_explanation_length_optimization();
             // println!("debug(graph):\n{:?} \n \n", runner.egraph.dump());
 
-            if runner.egraph.find(lhs_id) ==  runner.egraph.find(rhs_id) {
-                let mut explanation : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
+            if egraph.find(lhs_id) ==  egraph.find(rhs_id) {
+                 println!("DEBUG: found equivalence");
+                 println!("DEBUG: explaining equivalence...");
+                let mut explanation : Explanation<SymbolLang> = egraph.explain_equivalence(&target_lhs_expr,
                     & target_rhs_expr);
+                 println!("DEBUG: making flat explanation....");
                 let flat_explanation : &FlatExplanation =
                     explanation.make_flat_explanation();
 
                 // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
+                 println!("DEBUG: building proof...");
                 let explanation = build_proof(new_rewrites, flat_explanation);
+                 println!("returning proof");
                 Response::PerformRewrite { success: true, explanation: explanation, stop_reason : "proof found".to_string() }
             } else {
-                let extractor = Extractor::new(&runner.egraph, AstSize);
+                let extractor = Extractor::new(&egraph, AstSize);
                 let (_, bestlhs) = extractor.find_best(lhs_id);
                 let (_, bestrhs) = extractor.find_best(rhs_id);
-                let mut explanationlhs : Explanation<SymbolLang> = runner.explain_equivalence(&target_lhs_expr,
+                let mut explanationlhs : Explanation<SymbolLang> = egraph.explain_equivalence(&target_lhs_expr,
                     & bestlhs);
-                let mut explanationrhs : Explanation<SymbolLang> = runner.explain_equivalence(&target_rhs_expr,
+                let mut explanationrhs : Explanation<SymbolLang> = egraph.explain_equivalence(&target_rhs_expr,
                     & bestrhs);
 
                 let flat_explanation_lhs : &FlatExplanation = explanationlhs.make_flat_explanation();
                 let flat_explanation_rhs : &FlatExplanation = explanationrhs.make_flat_explanation();
 
-                // println!("DEBUG: explanation:\n{}\n", runner.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
+                // println!("DEBUG: explanation:\n{}\n", egraph.explain_equivalence(&target_lhs_expr, &target_rhs_expr).get_flat_string());
 
                 // let mut rules : Vec<Vec<String>> = Vec::new();
                 let mut explanation= build_proof(new_rewrites.clone(), flat_explanation_lhs);

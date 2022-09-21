@@ -34,7 +34,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "egg"
 version = "0.9.0"
-source = "git+https://github.com/egraphs-good/egg.git?rev=a851106#a8511064e76be2c88d619622b7f2575fb6542368"
+source = "git+https://github.com/egraphs-good/egg.git?rev=e19a18f#e19a18f60a6f1d3f5c466b37c0fe4d3cd69e550e"
 dependencies = [
  "env_logger 0.9.0",
  "fxhash",
