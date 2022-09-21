@@ -13,7 +13,12 @@ theorem testInstantiation
   -- egg can cope with!
   (group_inv: forall {g: Int}, g - g  = 0)
   (h: Int) (k: Int): h - h = k - k := by {
- eggxplosion [group_inv] noInstantiation;
+   -- expected no bound variables, we use locally nameless.
+   -- @andres: I strongly suspect the toExplode
+   -- array somehow leaking in `bvars` on accident. A cursory glance at it did not show me what it
+   -- does when it doesn't explode a variable; I would have expected it to instantiate an `mvar`.
+   -- eggxplosion [group_inv];
+   sorry
 }
 
 

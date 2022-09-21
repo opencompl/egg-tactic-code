@@ -82,10 +82,6 @@ def parseNameSexpr (sexpr: Sexp) : MetaM Name := do
     return Name.mkNum (← parseNameSexpr n) (s.toNat!)
   | _ => throwError s!"unexpected sexpr {sexpr}"
 
--- TODO: see if there is some other way to give mvars in a structured way instead of string
--- I really want to be able to give the full Name.
-def mvarIdToSexp (m:MVarId): Sexp :=
- "?" ++ toString m.name
 
 
 def levelToSexp: Level → Sexp
@@ -106,26 +102,55 @@ def parseLevelSexpr (s: Sexp): MetaM Level := do
   | Sexp.list [Sexp.atom "mvar", n] => return Level.mvar (LevelMVarId.mk (← parseNameSexpr n))
   | _ => throwError s!"unexpected level sexpr: {s}"
 
+
+mutual
+-- TODO: see if there is some other way to give mvars in a structured way instead of string
+-- I really want to be able to give the full Name.
+partial def mvarIdToSexp (m:MVarId): Sexp :=  Sexp.atom ("?" ++ toString m.name)
+
 /-
 convert this expression into a string, along with the names of the
 bound variables.
 -/
-def exprToSexp (e: Expr): MetaM Sexp :=
+partial def exprToUntypedSexp (e: Expr): MetaM Sexp :=
 match e with
   | Expr.const name [] => return .fromList ["const", nameToSexp name, "nolevels"]
   | Expr.const name levels => return .fromList ["const", nameToSexp name, .fromList ["levels", (levels.map levelToSexp)]]
   | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!, but found bvar '{ix}'"
   | Expr.fvar id => return .fromList ["fvar", nameToSexp id.name]
   -- TODO: see if there is some other way to give mvars in a structured way instead of string
-  | Expr.mvar id => return  mvarIdToSexp id
+  | Expr.mvar id => do
+     return (mvarIdToSexp id)
   | Expr.lit (.natVal n)=> return .fromList ["litNat", toString n]
+  | Expr.forallE _binderName _binderType body _binderInfo => return .fromList ["forall", <- exprToUntypedSexp body]
   | Expr.app  l r => do
-     return (.fromList ["ap", (← exprToSexp l), (← exprToSexp r)])
+     return (.fromList ["ap", (← exprToUntypedSexp l), (← exprToUntypedSexp r)])
+  | _ => throwError s!"unimplemented exprToUntypedSexp ({e.ctorName}): {e}"
+end
+
+partial def exprToTypedSexp (e: Expr): MetaM Sexp := do
+ let sexp <- match e with
+  | Expr.const name [] => pure $  .fromList ["const", nameToSexp name, "nolevels"]
+  | Expr.const name levels => pure $  .fromList ["const", nameToSexp name, .fromList ["levels", (levels.map levelToSexp)]]
+  | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!, but found bvar '{ix}'"
+  | Expr.fvar id => pure $  .fromList ["fvar", nameToSexp id.name]
+  -- TODO: see if there is some other way to give mvars in a structured way instead of string
+  | Expr.mvar id => do
+     -- let ty ← inferType e
+     -- pure $   .fromList ["mvar", mvarIdToSexp id, (<- exprToSexp ty)]
+     pure $  (mvarIdToSexp id)
+  | Expr.lit (.natVal n)=> pure $  .fromList ["litNat", toString n]
+  | Expr.app  l r => do
+     pure $  (.fromList ["ap", (← exprToTypedSexp l), (← exprToTypedSexp r)])
   | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
+ let t ← inferType e
+ return .fromList ["typed-expr", sexp, <- exprToUntypedSexp t]
+
 
 
 partial def parseExprSexpr (s: Sexp): MetaM Expr := do
   match s with
+  | Sexp.list [Sexp.atom "typed-expr", expr, _ty] => parseExprSexpr expr
   -- TODO: teach `egg` that empty sexp is okay
   | Sexp.list [Sexp.atom "const", name, Sexp.atom "nolevels"] => do
     return (Expr.const (← parseNameSexpr name) [])
@@ -437,8 +462,8 @@ def addBareEquality
       && direction == Backward) then
     addEggRewrite rw rwUnapplied
         ty unappliedRwType
-        (← exprToSexp lhs)
-        (← exprToSexp rhs) mvars direction
+        (← exprToTypedSexp lhs)
+        (← exprToTypedSexp rhs) mvars direction
   else
     dbg_trace "ERROR: Trying to add equality where the mvars of the LHS ({lhs}) is not a subset of the mvars of the RHS ({rhs})"
 
@@ -498,7 +523,7 @@ partial def addForallExplodedEquality_ (goal: MVarId)
   -- TODO: if we're skipping, don't beta-reduce,
   -- convert to mvar instead and continue
   -- This doesn't seem to work as-is.
-  -- else{ 
+  -- else{
   --   let (_,_,newRW) ← forallMetaTelescopeReducing rw (maxMVars? := some 1)
   --   let newType ← inferType newRW
   --   addForallExplodedEquality_ goal
@@ -711,10 +736,10 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   dbg_trace "using config: {repr cfg}"
 
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites cfg
-  dbg_trace "simplifying {(← exprToSexp goalLhs)} {(← exprToSexp goalRhs)} {rewrites}"
+  dbg_trace "simplifying {(← exprToTypedSexp goalLhs)} {(← exprToTypedSexp goalRhs)} {rewrites}"
 
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
-    (← exprToSexp goalLhs) (← exprToSexp goalRhs) rewrites
+    (← exprToTypedSexp goalLhs) (← exprToTypedSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   dbg_trace "simplification mapping {mapping}"
   let eggRequest := {
