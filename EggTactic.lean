@@ -187,19 +187,35 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   let mvarid2expr ← mvarsJson.foldM (init := []) (fun out mvaridStr expr => do {
     let expr ← exceptToMetaM <| expr.getStr?
     let expr ← exceptToMetaM <| parseSingleSexp expr
+    dbg_trace ("12.5.1) expr.currying....")
     let expr := expr.curry
-    let expr ← parseExprSexpr $ expr.unsimplify mapping
+    dbg_trace ("\t12.5.1) done!...")
+    dbg_trace ("12.5.1) expr.unsimplifying....")
+    let expr := expr.unsimplify mapping
+    dbg_trace ("\t12.5.1) done!...")
+    let expr ← parseExprSexpr $ expr
     let mvaridSexp ← exceptToMetaM <| parseSingleSexp mvaridStr
     return (mvaridSexp, expr) :: out
   })
   let result ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "result").getStr?
   let result ← exceptToMetaM <| (parseSingleSexp result)
+  dbg_trace ("12.5.2) result.currying....")
   let result := result.curry
-  let result ← parseExprSexpr $ result.unsimplify mapping
+  dbg_trace ("\t12.5.2) done!...")
+  dbg_trace ("\t12.5.2) result.unsimplifying....")
+  let result := result.unsimplify mapping
+  dbg_trace ("12.5.2) done!...")
+
+  let result ← parseExprSexpr $ result
 
   let source ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "source").getStr?
   let source ← exceptToMetaM <| parseSingleSexp source
+  dbg_trace ("12.5.3) source.currying....")
   let source := source.curry
+  dbg_trace ("12.5.3) source.done....")
+  dbg_trace ("12.5.3) source.unsimplify....")
+  let source := source.unsimplify mapping
+  dbg_trace ("12.5.3) source.done....")
   let source ← parseExprSexpr $ source.unsimplify mapping
 
   let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getNat?
