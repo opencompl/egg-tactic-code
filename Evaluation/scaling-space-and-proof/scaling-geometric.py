@@ -48,23 +48,59 @@ def count_program_coq_congruence(ndigits: int, radix: int, time_limit: int):
     out = ""
     out += "Inductive B :=" + "| ".join(f"B{r}" for r in range(radix)) + ".\n"
 
-    out += f"Theorem count_upward_{ndigits}_{radix}"
-    out += f"\n(count: " + ("B ->" * ndigits) + "B" + ")\n"
-    for r in range(radix):
-        # [n-1, i): universally quantified
-        # [i]: O
-        # [i-1, 0): I
-        out += f"(count_{r}: forall b : B, b = B{r})\n"
+    out += f"Theorem count_upward_{ndigits}_{radix}: forall"
+    out += f"\n(count: " + ("B ->" * ndigits) + "B" + ")"
+    for i in range(1, ndigits+1):
+        for r in range(radix-1):
+            # [n-1, i): universally quantified
+            # [i]: O
+            # [i-1, 0): I
+            out += f"(count_{i}_{r}:"
+            univ_vars = [f"b{i}" for i in list(range(ndigits, i, -1))]
+            if univ_vars:
+                out += "forall (" +  " ".join (univ_vars) + ": B), "
 
-    out += ": count " + (f"B0 " * ndigits) + " = " + "count "
-    for i in range(ndigits):
-        out += f"B{min(i,radix-1)} "
-    out += f".\nProof. intros. timeout {time_limit} (congruence 999999). Qed.\n";
+            # lhs
+            out += "count " + " ".join(univ_vars) + f" B{r}"+ f" B{r+1}" * ((i - 1) - 0)
+            out += " = "
+            out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
+            out += ")\n" # rule
+    out += "\n, count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
+    out += f"Proof. intros. timeout {time_limit} (congruence 999999). Qed.\n";
+    return out
+
+def count_program_coq_autorewrite(ndigits: int, radix: int, time_limit: int):
+    assert radix >= 2
+    assert ndigits >= 1
+    out = ""
+    out += "Inductive B :=" + "| ".join(f"B{r}" for r in range(radix)) + ".\n"
+    out += f"\n Parameter count: " + ("B ->" * ndigits) + "B" + ".\n"
+
+    for i in range(1, ndigits+1):
+        for r in range(radix-1):
+            # [n-1, i): universally quantified
+            # [i]: O
+            # [i-1, 0): I
+            out += f"Axiom count_{i}_{r}:"
+            univ_vars = [f"b{i}" for i in list(range(ndigits, i, -1))]
+            if univ_vars:
+                out += "forall (" +  " ".join (univ_vars) + ": B), "
+
+            # lhs
+            out += "count " + " ".join(univ_vars) + f" B{r}"+ f" B{r+1}" * ((i - 1) - 0)
+            out += " = "
+            out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
+            out += ".\n" # rule
+            out += "Global Hint Rewrite " + f"count_{i}_{r}"  " : base0.\n"
+
+    out += f"Theorem count_upward_{ndigits}: "
+    out += "count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f"B{radix-1} " * ndigits) + ".\n"
+    out += f"Proof. intros. timeout {time_limit} (autorewrite with base0). reflexivity. Qed.\n";
     return out
 
 def count_program_lean(ndigits: int, radix: int, tactic_name: str, time_limit: int):
     """
-    ndigits: number of places to keep your digits.
+    ndigits: number of places to keep your digits. 
     radix: base of the number system (binary, ternary, quaternary, ...)
     tactic_name: simp|eggxplosion
     """
@@ -82,19 +118,26 @@ inductive B where -- digit\n
     out += "open B\n"
 
     out += f"def count_upward_{ndigits}"
-    out += f"\n(count: " + ("B ->" * ndigits) + "Nat" + ")"
+    out += f"\n(count: " + ("B ->" * ndigits) + "B" + ")"
 
-    for r in range(radix):
-        # [n-1, i): universally quantified
-        # [i]: O
-        # [i-1, 0): I
-        out += f"(count_{r}: forall b : B, b = B{r})\n"
-
-    out += ": count " + (f"B0 " * ndigits) + " = " + "count "
-    for i in range(ndigits):
-        out += f"B{min(i,radix-1)} "
+    for i in range(1, ndigits+1):
+        for r in range(0, radix-1):
+            # ith rule says when it is legal to toggle ith bit
+            # [n-1, i): universally quantified
+            # [i]: O
+            # [i-1, 0): I
+            out += f"\n(count_{i}_{r}:"
+            univ_vars = [f"b{i}" for i in list(range(ndigits, i, -1))]
+            if univ_vars:
+                out += "∀ (" +  " ".join (univ_vars) + ": B), "
+            # smaller number. Think that O = B0, I = B1
+            out += "count " + " ".join(univ_vars) + f" B{r}" + f" B{r+1}" * ((i - 1) - 0)
+            out += " = "
+            out += "count " + " ".join(univ_vars) + f" B{r+1}" + f" B{r}" * ((i - 1) - 0)
+            out += ")" # rule
+    out += "\n  : " + "count " + (f"B{max(0, radix-3)} " * ndigits) + " = " + "count " + (f" B{max(0, radix-1)}" * ndigits)
     out += ":= by {"
-    out += tactic_name + "["+ ", ".join([f"count_{r}" for r in range(0, radix)]) + "]";
+    out += tactic_name + "["+ ", ".join([f"count_{i}_{r}" for i in range(1, ndigits+1) for r in range(0, radix-1)]) + "]";
     # bollu: hack :( 
     if tactic_name == "eggxplosion": out += f" noInstantiation oneSided (timeLimit := {time_limit})" 
     out += "}"
@@ -140,7 +183,7 @@ def run(logging, cwd, rootdir):
 
     setup_run(logging, cwd, rootdir)
 
-    N = 21; NSTEP = 3;
+    N = 120; NSTEP = 5;
     NDIGITS=2
     TIMELIMIT=30
 
@@ -171,6 +214,28 @@ def run(logging, cwd, rootdir):
               logging.debug(row)
               writer.writerow(row)
               OUTFILE.flush(); os.fsync(OUTFILE)
+            # LEAN simp runner
+            if errored_out['lean-simp'] :
+              logging.debug("Skipping lean-simp")
+            else:
+              testpath = cwd / "build" / "lean-simp" / f"n{i}.lean"
+              with open(testpath, "w") as f:
+                  f.write(count_program_lean(ndigits=NDIGITS, radix=i, tactic_name="simp", time_limit=TIMELIMIT))
+              os.environ['LEAN_PATH'] = str(rootdir / "build" / "lib")
+              logging.debug("export LEAN_PATH=" + str(rootdir / "build" / "lib"))
+              command = ['lean', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["lean-simp", i, str(end - start)]
+              except:
+                row = ["lean-simp", i, "ERR"]
+                errored_out['lean-simp'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
             # COQ congruence runner
             if errored_out['coq-congruence']:
               logging.debug('Skipping coq-congruence')
@@ -191,6 +256,27 @@ def run(logging, cwd, rootdir):
               logging.debug(row)
               writer.writerow(row)
               OUTFILE.flush(); os.fsync(OUTFILE)
+            # COQ autorewrite runner
+            if errored_out['coq-autorewrite']:
+              logging.debug("Skpping coq-autorewrite")
+            else:
+              testpath = cwd / "build" / "coq-autorewrite" / f"n{i}.v"
+              with open(testpath, "w") as f:
+                  f.write(count_program_coq_autorewrite(ndigits=NDIGITS, radix=i, time_limit=TIMELIMIT))
+              command = ['coqc', testpath]
+              start = timer()
+              try:
+                subprocess.check_call(command)
+                end = timer()
+                row = ["coq-autorewrite", i, str(end - start)]
+              except:
+                row = ["coq-autorewrite", i, "ERR"]
+                errored_out['coq-autorewrite'] = True
+              assert len(row) == len(G_DATA_HEADER)
+              logging.debug(row)
+              writer.writerow(row)
+              OUTFILE.flush(); os.fsync(OUTFILE)
+
 
 def plot(logging, cwd, rootdir):
     os.chdir(rootdir / "Evaluation" / "scaling-search-space")
