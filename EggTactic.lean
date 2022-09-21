@@ -103,6 +103,7 @@ def parseLevelSexpr (s: Sexp): MetaM Level := do
   | _ => throwError s!"unexpected level sexpr: {s}"
 
 
+
 mutual
 -- TODO: see if there is some other way to give mvars in a structured way instead of string
 -- I really want to be able to give the full Name.
@@ -116,7 +117,7 @@ partial def exprToUntypedSexp (e: Expr): MetaM Sexp :=
 match e with
   | Expr.const name [] => return .fromList ["const", nameToSexp name, "nolevels"]
   | Expr.const name levels => return .fromList ["const", nameToSexp name, .fromList ["levels", (levels.map levelToSexp)]]
-  | Expr.bvar ix => throwError s!"expected no bound variables, we use locally nameless!, but found bvar '{ix}'"
+  | Expr.bvar ix => return .fromList ["bbar", toString ix]
   | Expr.fvar id => return .fromList ["fvar", nameToSexp id.name]
   -- TODO: see if there is some other way to give mvars in a structured way instead of string
   | Expr.mvar id => do
@@ -125,6 +126,7 @@ match e with
   | Expr.forallE _binderName _binderType body _binderInfo => return .fromList ["forall", <- exprToUntypedSexp body]
   | Expr.app  l r => do
      return (.fromList ["ap", (← exprToUntypedSexp l), (← exprToUntypedSexp r)])
+  | Expr.sort lvl => return (.fromList ["sort", levelToSexp lvl])
   | _ => throwError s!"unimplemented exprToUntypedSexp ({e.ctorName}): {e}"
 end
 
@@ -503,7 +505,9 @@ partial def addForallExplodedEquality_ (goal: MVarId)
   (ty: Expr)
   (unappliedRwType: Expr)
   (toExplode : Array Bool)
+  (mvars: Array MVarId)
   : EggM Unit := do
+  tacticGuard ty.universallyQuantifiedEq? "**expected ∀ ... a = b**"
   if let Expr.forallE x xty body _ := ty then do {
   --dbg_trace "**forall is : (FA [{x} : {xty}] {body})"
    if toExplode.back then{
@@ -518,21 +522,25 @@ partial def addForallExplodedEquality_ (goal: MVarId)
                 (Expr.beta rw #[xval])
                 (← instantiateForall ty #[xval])
                 (← instantiateForall ty #[xval])
-                toExplode.pop
+                toExplode.pop mvars
    }
   -- TODO: if we're skipping, don't beta-reduce,
   -- convert to mvar instead and continue
   -- This doesn't seem to work as-is.
-  -- else{
-  --   let (_,_,newRW) ← forallMetaTelescopeReducing rw (maxMVars? := some 1)
-  --   let newType ← inferType newRW
-  --   addForallExplodedEquality_ goal
-  --       newRW newRW newType newType toExplode.pop
-  -- }
-  } else {
-    addBareEquality rw rwUnapplied ty unappliedRwType #[] Forward;
-    addBareEquality rw rwUnapplied ty unappliedRwType #[] Backward
-  }
+   else do {
+      let m ← mkFreshExprMVar (type? := .some xty) (userName := x)
+      addForallExplodedEquality_
+        goal
+        (Expr.beta rw #[m])
+        (Expr.beta rw #[m])
+        (← instantiateForall ty #[m])
+        (← instantiateForall ty #[m])
+        toExplode.pop (mvars.push m.mvarId!)
+   }
+ } else do {
+   addBareEquality rw rwUnapplied ty unappliedRwType mvars Forward;
+   addBareEquality rw rwUnapplied ty unappliedRwType mvars Backward;
+ }
 
 
 -- See `addForallExplodedEquality_`
@@ -545,18 +553,17 @@ def addForallExplodedEquality (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit :=
       | some (_, lhs, rhs) =>
           pure (lhs, rhs)
       | none => throwError f!"**expected type to be equality: {ty}"
+  let ms := ms.map Expr.mvarId!
   if lhs.getAppMVars.isSubsetOf rhs.getAppMVars then
-    let toExplode := rhs.getAppMVars.map
-      λ mv => !lhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
+    let toExplode := ms.map $ λ mv => !lhs.getAppMVars.contains mv && ms.contains mv
     -- we reverse toExplode so we can pop later
-    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse (mvars := #[])
     unless (← get).config.twoSided do
       return ()
   if rhs.getAppMVars.isSubsetOf lhs.getAppMVars then
-    let toExplode := lhs.getAppMVars.map
-      λ mv => !rhs.getAppMVars.contains mv && (ms.map Expr.mvarId!).contains mv
+    let toExplode := ms.map $ λ mv => !rhs.getAppMVars.contains mv && ms.contains mv
     -- we reverse toExplode so we can pop later
-    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse
+    addForallExplodedEquality_ goal rw rw ty ty toExplode.reverse (mvars := #[])
 
 -- Add an expression into the EggM context, if it is indeed a rewrite
 def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do

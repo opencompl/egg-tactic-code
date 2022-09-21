@@ -8,21 +8,6 @@ import EggTactic
 --
 -- This is a problem because we need to know the rewrite term to perform the rewrite.
 -- We can't just use the goal state because the goal state is the result of the rewrite.
-theorem testInstantiation
-  -- TODO: need to change definitions to make all arguments implicit, since those are the only kinds of rewrites
-  -- egg can cope with!
-  (group_inv: forall {g: Int}, g - g  = 0)
-  (h: Int) (k: Int): h - h = k - k := by {
-   -- expected no bound variables, we use locally nameless.
-   -- @andres: I strongly suspect the toExplode
-   -- array somehow leaking in `bvars` on accident. A cursory glance at it did not show me what it
-   -- does when it doesn't explode a variable; I would have expected it to instantiate an `mvar`.
-   -- eggxplosion [group_inv];
-   sorry
-}
-
-
-#print testInstantiation
 
 
 theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
@@ -137,3 +122,18 @@ theorem inv_mul_cancel_left (G: Type)
 
 #print inv_mul_cancel_left
 
+
+theorem testInstantiation
+  -- TODO: need to change definitions to make all arguments implicit, since those are the only kinds of rewrites
+  -- egg can cope with!
+  (group_inv: forall {g: Int}, g - g  = 0)
+  (h: Int) (k: Int): h - h = k - k := by {
+   -- expected no bound variables, we use locally nameless.
+   -- @andres: I strongly suspect the toExplode
+   -- array somehow leaking in `bvars` on accident. A cursory glance at it did not show me what it
+   -- does when it doesn't explode a variable; I would have expected it to instantiate an `mvar`.
+   eggxplosion [group_inv];
+}
+
+
+#print testInstantiation
