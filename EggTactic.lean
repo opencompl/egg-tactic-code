@@ -216,7 +216,7 @@ def parseExplanation (mapping : VariableMapping) (j: Json) : MetaM Eggxplanation
   dbg_trace ("12.5.3) source.unsimplify....")
   let source := source.unsimplify mapping
   dbg_trace ("12.5.3) source.done....")
-  let source ← parseExprSexpr $ source.unsimplify mapping
+  let source ← parseExprSexpr $ source
 
   let position ← exceptToMetaM (← exceptToMetaM <| j.getObjVal? "position").getNat?
 
