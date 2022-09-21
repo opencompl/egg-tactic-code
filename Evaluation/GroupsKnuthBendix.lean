@@ -55,8 +55,9 @@ theorem inv_mul
   (mulOne: forall (a: G), mul a one = a)
   (invRight: forall (a: G), mul a (inv a) = one)
   (x y : G)
-  : (inv (mul x y)) = (mul (inv y) (inv x)) := by
-  eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight] (timeLimit := 5)
+  : (inv (mul x y)) = (mul (inv y) (inv x)) := by {
+    eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
+  }
 
 #print inv_mul
 
