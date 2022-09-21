@@ -480,8 +480,8 @@ def addBareEquality
       && direction == Backward) then
     addEggRewrite rw rwUnapplied
         ty unappliedRwType
-        (← exprToTypedSexp lhs)
-        (← exprToTypedSexp rhs) mvars direction
+        (← exprToUntypedSexp lhs)
+        (← exprToUntypedSexp rhs) mvars direction
   else
     dbg_trace "ERROR: Trying to add equality where the mvars of the LHS ({lhs}) is not a subset of the mvars of the RHS ({rhs})"
 
@@ -759,10 +759,10 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   dbg_trace "using config: {repr cfg}"
 
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites cfg
-  dbg_trace "simplifying {(← exprToTypedSexp goalLhs)} {(← exprToTypedSexp goalRhs)} {rewrites}"
+  dbg_trace "simplifying {(← exprToUntypedSexp goalLhs)} {(← exprToUntypedSexp goalRhs)} {rewrites}"
 
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
-    (← exprToTypedSexp goalLhs) (← exprToTypedSexp goalRhs) rewrites
+    (← exprToUntypedSexp goalLhs) (← exprToUntypedSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   dbg_trace "simplification mapping {mapping}"
   let eggRequest := {
