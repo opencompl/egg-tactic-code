@@ -113,23 +113,21 @@ partial def mvarIdToSexp (m:MVarId): Sexp :=  Sexp.atom ("?" ++ toString m.name)
 convert this expression into a string, along with the names of the
 bound variables.
 -/
-partial def exprToTypeLevelSexp (e: Expr): MetaM Sexp :=
+partial def exprToUntypedSexp (e: Expr): MetaM Sexp :=
 match e with
-  | Expr.const name [] => return .fromList ["ty-const", nameToSexp name, "ty-nolevels"]
-  | Expr.const name levels => return .fromList ["ty-const", nameToSexp name, .fromList ["ty-levels", (levels.map levelToSexp)]]
-  | Expr.bvar ix => return .fromList ["ty-bvar", toString ix]
-  | Expr.fvar id => return .fromList ["ty-fvar", nameToSexp id.name]
+  | Expr.const name [] => return .fromList ["const", nameToSexp name, "nolevels"]
+  | Expr.const name levels => return .fromList ["const", nameToSexp name, .fromList ["levels", (levels.map levelToSexp)]]
+  | Expr.bvar ix => return .fromList ["bbar", toString ix]
+  | Expr.fvar id => return .fromList ["fvar", nameToSexp id.name]
   -- TODO: see if there is some other way to give mvars in a structured way instead of string
   | Expr.mvar id => do
-     return Sexp.atom ("ty-mvar-" ++ (toString id.name)) -- TODO: not sure what I should do with mvars at the type level..
-  | Expr.lit (.natVal n)=> 
-    return .fromList ["ty-litNat", toString n]
-  | Expr.forallE _binderName _binderType body _binderInfo => 
-    return .fromList ["ty-forall", <- exprToTypeLevelSexp body]
+     return (mvarIdToSexp id)
+  | Expr.lit (.natVal n)=> return .fromList ["litNat", toString n]
+  | Expr.forallE _binderName _binderType body _binderInfo => return .fromList ["forall", <- exprToUntypedSexp body]
   | Expr.app  l r => do
-     return (.fromList ["ty-ap", (← exprToTypeLevelSexp l), (← exprToTypeLevelSexp r)])
-  | Expr.sort lvl => return (.fromList ["ty-sort", levelToSexp lvl])
-  | _ => throwError s!"unimplemented exprToTypeLevelSexp ({e.ctorName}): {e}"
+     return (.fromList ["ap", (← exprToUntypedSexp l), (← exprToUntypedSexp r)])
+  | Expr.sort lvl => return (.fromList ["sort", levelToSexp lvl])
+  | _ => throwError s!"unimplemented exprToUntypedSexp ({e.ctorName}): {e}"
 end
 
 partial def exprToTypedSexp (e: Expr): MetaM Sexp := do
@@ -148,7 +146,7 @@ partial def exprToTypedSexp (e: Expr): MetaM Sexp := do
      pure $  (.fromList ["ap", (← exprToTypedSexp l), (← exprToTypedSexp r)])
   | _ => throwError s!"unimplemented expr_to_string ({e.ctorName}): {e}"
  let t ← inferType e
- return .fromList ["typed-expr", sexp, <- exprToTypeLevelSexp t]
+ return .fromList ["typed-expr", sexp, <- exprToUntypedSexp t]
 
 
 
@@ -482,8 +480,8 @@ def addBareEquality
       && direction == Backward) then
     addEggRewrite rw rwUnapplied
         ty unappliedRwType
-        (← exprToTypedSexp lhs)
-        (← exprToTypedSexp rhs) mvars direction
+        (← exprToUntypedSexp lhs)
+        (← exprToUntypedSexp rhs) mvars direction
   else
     dbg_trace "ERROR: Trying to add equality where the mvars of the LHS ({lhs}) is not a subset of the mvars of the RHS ({rhs})"
 
@@ -761,10 +759,10 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   dbg_trace "using config: {repr cfg}"
 
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites cfg
-  dbg_trace "simplifying {(← exprToTypedSexp goalLhs)} {(← exprToTypedSexp goalRhs)} {rewrites}"
+  dbg_trace "simplifying {(← exprToUntypedSexp goalLhs)} {(← exprToUntypedSexp goalRhs)} {rewrites}"
 
   let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
-    (← exprToTypedSexp goalLhs) (← exprToTypedSexp goalRhs) rewrites
+    (← exprToUntypedSexp goalLhs) (← exprToUntypedSexp goalRhs) rewrites
   dbg_trace "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   dbg_trace "simplification mapping {mapping}"
   let eggRequest := {
