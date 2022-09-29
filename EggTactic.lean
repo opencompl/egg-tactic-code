@@ -19,7 +19,7 @@ builtin_initialize registerTraceClass `EggTactic.egg
 
 -- Path to the egg server.
 def egg_server_path : String :=
-  "json-egg/target/release/egg-herbie"
+  "utils/egg-herbie"
 
 inductive EggRewriteDirection where
   | Forward
