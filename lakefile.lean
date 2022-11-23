@@ -25,7 +25,7 @@ def buildCargo (targetFile : FilePath) (manifestFile : FilePath) (targetDest : F
       args := #[targetFile.toString, targetDest.toString]
     }
 
-@[defaultTarget]
+@[default_target]
 target «egg-herbie» (pkg : Package) : FilePath := do
   let buildDir := pkg.dir / "json-egg"
   let binFile := buildDir / "target" / "release" / "egg-herbie"
