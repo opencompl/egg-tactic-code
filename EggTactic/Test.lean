@@ -1,7 +1,6 @@
 import EggTactic
 
-
-
+set_option trace.EggTactic.egg true
 -- TODO @andres: what egg gives us back is wrong. What we really need to know is the rewrite term that we need to use.
 -- This means we should build the sexpr (<rewrite-term> <arg-1> ... <arg-n>) and then use this to perform the rewrite.
 -- Instead, what `egg` gives us is the goal state after the rewrite.
@@ -121,6 +120,25 @@ theorem inv_mul_cancel_left (G: Type)
   eggxplosion [assocMul, invLeft, mulOne, invRight] (timeLimit := 3)
 
 #print inv_mul_cancel_left
+
+def all {α  : Type} (p : α → Bool) (xs : List α) := List.and (List.map p xs)
+def all'{α  : Type} (p : α → Bool) (xs : List α) := List.foldr (λ a b => b && (p a)) True xs
+
+theorem deforestation : ∀ (p : α → Bool) (xs : List α), all p xs = all' p xs := by
+  intros p xs
+  unfold all
+  unfold all'
+  unfold List.map
+  unfold List.and
+  unfold List.all
+  induction xs with
+    | nil =>
+      simp
+      rfl
+    | cons head tail ih =>
+      -- ⊢ List.foldr (fun a r => a && r) true (p head :: List.map p tail) = List.foldr (fun a b => b && p a) true (head :: tail)
+
+
 
 
 theorem testInstantiation
