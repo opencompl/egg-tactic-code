@@ -1,5 +1,6 @@
 import EggTactic
 
+set_option trace.EggTactic.egg true
 theorem inv_inv
   {G: Type}
   (inv: G → G)
