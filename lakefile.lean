@@ -1,14 +1,14 @@
 import Lake
 open Lake DSL
 
-package «egg-tactic» {
-  supportInterpreter := true,
-  libRoots := #[`EggTactic]
-  libName := "EggTactic"
-  binRoot := `Main
+package «egg-tactic»
 
-  -- add configuration options here
+lean_lib EggTactic
 
+@[defaultTarget]
+lean_exe «EggTacticExe» {
+  root := `EggTactic
+  supportInterpreter := true
 }
 
---require «aesop» from git  "https://github.com/JLimperg/aesop" @ "3fb480b3d7b1e70e488e479e94875bb94d7c8ade"
+-- require «egg-tactic» from git  "https://github.com/opencompl/egg-tactic-code" @ "499ef2d"

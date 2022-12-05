@@ -1,4 +1,5 @@
 import EggTactic.Sexp
+-- import EggTactic.Eqsat
 import Lean.Meta.Tactic.Rewrite
 import Lean.Meta.Tactic.Refl
 import Lean.Meta.Tactic.Simp
