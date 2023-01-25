@@ -1,5 +1,6 @@
 {
-    "timeout": 9999999,
+    "timeout": 30,
+    "dump-graph" : false,
     "rewrites": [
         {
             "rhs": "one",

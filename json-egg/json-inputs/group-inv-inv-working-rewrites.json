@@ -1,5 +1,6 @@
 {
-    "timeout": 3,
+    "timeout": 30,
+    "dump-graph" : false,
     "rewrites": [
         {
             "rhs": "v10",

@@ -40,3 +40,4 @@ lean_lib EggTactic{
   -- add configuration options here
 
 --require «aesop» from git  "https://github.com/JLimperg/aesop" @ "3fb480b3d7b1e70e488e479e94875bb94d7c8ade"
+-- require smt from git "https://github.com/ufmg-smite/lean-smt.git"@"main"

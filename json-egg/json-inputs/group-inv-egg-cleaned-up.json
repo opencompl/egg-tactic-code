@@ -1,6 +1,8 @@
 {
    "request":"perform-rewrite",
    "target-lhs":"(ap inv (ap inv x))",
+   "timeout" : 30,
+   "dump-graph" : false,
    "target-rhs":"x",
    "rewrites":[
       {

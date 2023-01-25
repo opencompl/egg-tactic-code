@@ -301,6 +301,7 @@ structure EggConfig where
   explodeMVars : Bool := true
   twoSided : Bool := true
   dumpGraph : Bool := false
+  simplifyExprs : Bool := false
   time : Nat := 25
   deriving Repr
 
@@ -726,6 +727,7 @@ syntax "(" "timeLimit" ":=" num ")" : eggconfigval
 syntax "noInstantiation" : eggconfigval
 syntax "dump" : eggconfigval
 syntax "oneSided" : eggconfigval
+syntax "simplify" : eggconfigval
 syntax eggconfigval eggconfig : eggconfig
 syntax eggconfigval : eggconfig
 
@@ -733,6 +735,7 @@ def Lean.TSyntax.updateEggConfig : TSyntax `eggconfigval → EggConfig → EggCo
   | `(eggconfigval| noInstantiation ) => λ cfg => { cfg with explodeMVars := false }
   | `(eggconfigval| oneSided ) =>  λ cfg => { cfg with twoSided := false }
   | `(eggconfigval| dump ) =>  λ cfg => { cfg with dumpGraph := true }
+  | `(eggconfigval| simplify ) =>  λ cfg => { cfg with simplifyExprs := true }
   | `(eggconfigval| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
   | stx => panic! s!"unknown eggxplosion configuration syntax {stx}"
 
@@ -761,8 +764,11 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   let rewrites ←  (addNamedRewrites (<- getMainGoal) (rewriteNames.getElems.toList)).getRewrites cfg
   trace[EggTactic.egg] "simplifying {(← exprToUntypedSexp goalLhs)} {(← exprToUntypedSexp goalRhs)} {rewrites}"
 
-  let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) := simplifyRequest
-    (← exprToUntypedSexp goalLhs) (← exprToUntypedSexp goalRhs) rewrites
+  let (simplifiedLhs,simplifiedRhs,simplifiedRewrites,mapping) :=
+    if cfg.simplifyExprs then
+       simplifyRequest (← exprToUntypedSexp goalLhs) (← exprToUntypedSexp goalRhs) rewrites
+    else
+       (← exprToUntypedSexp goalLhs,← exprToUntypedSexp goalRhs,rewrites,[])
   trace[EggTactic.egg] "simplification result {simplifiedLhs} {simplifiedRhs} {simplifiedRewrites}"
   trace[EggTactic.egg] "simplification mapping {mapping}"
   let eggRequest := {

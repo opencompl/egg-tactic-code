@@ -1,6 +1,8 @@
 {
    "request":"perform-rewrite",
    "target-lhs":"(ap (fvar (num (str anonymous _uniq) 547)) (ap (fvar (num (str anonymous _uniq) 547)) (fvar (num (str anonymous _uniq) 550))))",
+   "timeout" : 30,
+   "dump-graph" : false,
    "target-rhs":"(fvar (num (str anonymous _uniq) 550))",
    "rewrites":[
       {

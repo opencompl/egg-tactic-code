@@ -387,9 +387,9 @@ fn handle_request(req: Request) -> Response {
             //.with_scheduler(scheduler::BoundedGraphScheduler::default())
             //.with_scheduler(BackoffScheduler::default().with_initial_match_limit(8))
             //.with_scheduler(SimpleScheduler)
-            .with_node_limit(10000)
+            .with_node_limit(100000)
             .with_time_limit(Duration::from_secs(timeout))
-            .with_iter_limit(10000)
+            .with_iter_limit(100000)
             .with_egraph(graph)
             .with_explanations_enabled()
             .with_hook(move |runner| {
