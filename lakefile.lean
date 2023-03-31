@@ -1,6 +1,8 @@
 import Lake
 open Lake DSL
 
+require Std from git "https://github.com/leanprover/std4"@"529a6"
+
 package «egg-tactic» {
 
 }
@@ -25,7 +27,7 @@ def buildCargo (targetFile : FilePath) (manifestFile : FilePath) (targetDest : F
       args := #[targetFile.toString, targetDest.toString]
     }
 
-@[default_target]
+-- @[default_target]
 target «egg-herbie» (pkg : Package) : FilePath := do
   let buildDir := pkg.dir / "json-egg"
   let binFile := buildDir / "target" / "release" / "egg-herbie"
@@ -33,6 +35,7 @@ target «egg-herbie» (pkg : Package) : FilePath := do
   let manifestFile := buildDir / "Cargo.toml"
   buildCargo binFile manifestFile dest #[]
 
+@[default_target]
 lean_lib EggTactic{
   roots := #[`EggTactic]
   precompileModules := true
@@ -41,3 +44,6 @@ lean_lib EggTactic{
 
 --require «aesop» from git  "https://github.com/JLimperg/aesop" @ "3fb480b3d7b1e70e488e479e94875bb94d7c8ade"
 -- require smt from git "https://github.com/ufmg-smite/lean-smt.git"@"main"
+
+-- require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "master"
+

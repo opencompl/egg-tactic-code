@@ -1,5 +1,6 @@
 import EggTactic.Sexp
 import EggTactic.Tracing
+import EggTactic.Egraph
 import Lean.Meta.Tactic.Rewrite
 import Lean.Meta.Tactic.Refl
 import Lean.Meta.Tactic.Simp
