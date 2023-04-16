@@ -52,48 +52,61 @@ notation p " ^= " v => DerefM.set p v -- set a pointer to a value
 structure HashConsTerm (σ : Type) where
   head : σ
   args : Array (Ptr `Egraph.Eclass) := #[]
-deriving BEq, DecidableEq, Hashable, Inhabited
+deriving BEq, DecidableEq, Hashable, Inhabited -- TODO: check that we don't use DecidableEq
 
--- equivalence class of terms.
-structure Eclass (σ : Type) where
-  members : Array (HashConsTerm σ)
+
+/-- Typeclass that ρ is the type of equalities over α -/
+class Reason (ρ : outParam Type) (α : Type) where
+  refl : HashConsTerm α → ρ
+  trans : ρ → ρ → ρ
+  sym : ρ → ρ
+  -- given reasons for subterms being equivalent, create reason for term.
+  -- head × [(old, eq, arg)] -> new
+  subterm : σ → Array (HashConsTerm α × ρ × HashConsTerm α) → ρ
+
+/-- equivalence class of terms. Eclass <kind> <reason for union> -/
+structure Eclass (σ : Type) (ρ : Type)  where
+  members : Array ((HashConsTerm σ))
   -- TODO: cannot use (Ptr Eclass) here :(
   -- lmao, just use names!
   parentTerms : Array (HashConsTerm σ × Ptr `Egraph.Eclass)
-  πcanon : Ptr `Egraph.Eclass -- pointer to canonical eclass represenative
+  termcanon : HashConsTerm σ
+  πcanon : (Ptr `Egraph.Eclass × ρ) -- pointer to canonical eclass represenative, and proof of equivalence between this->termcanon and πcanon->termcanon
   subtreeSize : UInt64 -- union find subtree size
 deriving BEq, DecidableEq, Hashable, Inhabited
 
 /-- create a singleton e class. -/
-def Eclass.singleton (πcanon : Ptr ``Eclass) (member : HashConsTerm σ) : Eclass σ where
+def Eclass.singleton [R : Reason ρ σ]
+  (πcanon : Ptr ``Eclass) (member : HashConsTerm σ) : Eclass σ ρ where
   members := #[member]
   parentTerms := {}
-  πcanon := πcanon
+  termcanon := member
+  πcanon := (πcanon, R.refl member)
   subtreeSize := 0
 
 /-- add a term and the e-class that owns the term as the parent
 of this e-class.
 we add the parent e-class as well as the term since this informatoin
 is useful when moving terms around during the update. --/
-def Eclass.addParent (cls : Eclass σ)
+def Eclass.addParent (cls : Eclass σ ρ)
   (tm : HashConsTerm σ)
-  (πtm_cls : Ptr ``Eclass) :=
+  (πtm_cls : Ptr ``Eclass) : Eclass σ ρ :=
   { cls with parentTerms := cls.parentTerms.push (tm, πtm_cls) }
 
 
 abbrev Error : Type := String
 
 /-- the data of the Egraph state. -/
-structure State (σ : Type)  where
+structure State (σ : Type) (ρ : Type) where
   σinhabited : Inhabited σ
   σbeq : DecidableEq σ
   σhashable : Hashable σ
-  eclasses : Memory (Eclass σ)
+  eclasses : Memory (Eclass σ ρ)
   hashconsterms : Memory (HashConsTerm σ)
-  term2classp : HashMap (HashConsTerm σ) (Ptr ``Eclass)
+  term2classp : HashMap (HashConsTerm σ) (Ptr ``Eclass × ρ)
   errors : Array Error
 
-def State.new [Inhabited σ] [DecidableEq σ] [Hashable σ] : State σ where
+def State.new [Inhabited σ] [DecidableEq σ] [Hashable σ] : State σ ρ where
   σinhabited := inferInstance
   σbeq := inferInstance
   σhashable := inferInstance
@@ -104,52 +117,53 @@ def State.new [Inhabited σ] [DecidableEq σ] [Hashable σ] : State σ where
 
 
 /-- TODO: add error -/
-abbrev T (σ : Type) (m : Type → Type) (α : Type) : Type := StateT (State σ) m α
-abbrev M σ α := T σ Id α
+abbrev T (σ ρ : Type) (m : Type → Type) (α : Type) : Type := StateT (State σ ρ) m α
+abbrev M σ ρ α := T σ ρ Id α
 
-def logError [Monad m] : Error → T σ m Unit
+def logError [Monad m] : Error → T σ ρ m Unit
 | e => modify fun s => { s with errors := s.errors.push e }
 
 /-- deref an e-class -/
-instance [Monad m] : DerefM (T σ m) ``Eclass (Eclass σ) where
+instance [Monad m] : DerefM (T σ ρ m) ``Eclass (Eclass σ ρ) where
   deref ptr := do
     return (← get).eclasses.find? ptr.ix
   set ptr v := modify (fun s =>
-    { s with eclasses := s.eclasses.insert ptr.ix v : State σ })
+    { s with eclasses := s.eclasses.insert ptr.ix v : State σ ρ })
   malloc := do
     let ptr := Ptr.mk <| UInt64.ofNat (← get).eclasses.size
     return ptr
 
-instance [Monad m] : DerefM (T σ m) ``HashConsTerm (HashConsTerm σ) where
+instance [Monad m] : DerefM (T σ ρ m) ``HashConsTerm (HashConsTerm σ) where
   deref ptr := do
     return (← get).hashconsterms.find? ptr.ix
   set ptr v := modify (fun s =>
-    { s with hashconsterms := s.hashconsterms.insert ptr.ix v : State σ })
+    { s with hashconsterms := s.hashconsterms.insert ptr.ix v : State σ ρ})
   malloc := do
     let ptr := Ptr.mk <| UInt64.ofNat (← get).eclasses.size
     return ptr
 
-class Canonicalize (σ : Type) (α : Type) where
-  canonicalize [Monad m] : α → T σ m α
+class Canonicalize (σ : Type) (α : Type) (β: outParam Type) where
+  canonicalize [Monad m] : α → T σ ρ m β
 
 /-- return canonical pointer -/
 notation "⟦" x "⟧" => Canonicalize.canonicalize x
 
-partial def canonicalizeClass [Monad m]
-  (πcls :  Ptr ``Eclass) : T σ m (Ptr ``Eclass) := do
-    let cls : (Eclass σ) ← πcls.deref!
-    if cls.πcanon == πcls
-    then return πcls
+partial def canonicalizeClass [Monad m] [Inhabited ρ] [Inhabited σ]
+  (πcls :  Ptr ``Eclass) : T σ ρ m (Ptr ``Eclass × ρ) := do
+    let cls : (Eclass σ ρ) ← πcls.deref!
+    if cls.πcanon.fst == πcls
+    then return cls.πcanon
     else do
       let πcanon ← Egraph.canonicalizeClass πcls
       πcls ^= { cls with πcanon := πcanon }
       return πcanon
 
-instance : Canonicalize σ (Ptr ``Eclass) where
-  canonicalize := canonicalizeClass
+instance [Inhabited σ] [Inhabited ρ] :
+  Canonicalize σ (Ptr ``Eclass) (Ptr ``Eclass × ρ) where
+  canonicalize cls := canonicalizeClass cls
 
  partial def canonicalizeHashConsTerm [Monad m] (htm : HashConsTerm σ) :
-  T σ m (HashConsTerm σ) := do
+  T σ ρ m (HashConsTerm σ × ρ) := do
   let _ : Inhabited σ := (← get).σinhabited
   let htm := { htm with args := (← htm.args.mapM canonicalizeClass) }
   return htm
@@ -158,38 +172,37 @@ instance : Canonicalize σ (HashConsTerm σ) where
   canonicalize := canonicalizeHashConsTerm
 
 /-- Find e-class of the given E graph. -/
-partial def HashConsTerm.find! [Monad m] (htm : HashConsTerm σ) :
-  T σ m (Ptr ``Eclass) := do
+partial def HashConsTerm.find! [Inhabited ρ] [Monad m] (htm : HashConsTerm σ) :
+  T σ ρ m (Ptr ``Eclass × ρ) := do
   match (← get).term2classp.find? (← ⟦htm⟧) with
   | .some cls => return cls
   | .none => panic! "unable to find e-class"
 
 
-partial def HashConsTerm.findOrAdd [Monad m] (htm : HashConsTerm σ) :
-  T σ m (Ptr ``Eclass) := do
+partial def HashConsTerm.findOrAdd [R : Reason ρ σ]
+  [Monad m] (htm : HashConsTerm σ) :
+  T σ ρ m (Ptr ``Eclass × ρ) := do
   let htm ← ⟦htm⟧
-  let πhtm_cls ←
-    match (← get).term2classp.find?  htm with
+  let (πhtm_cls, reason) ←
+    match (← get).term2classp.find? htm with
     | .some x => pure x
     | .none => do
         let πhtm_cls ← DerefM.malloc (α := ``Eclass)
-        modify (fun state => { state with term2classp := state.term2classp.insert htm πhtm_cls })
+        modify (fun state => { state with term2classp := state.term2classp.insert htm (πhtm_cls, R.refl htm) })
         πhtm_cls ^= Eclass.singleton (πcanon := πhtm_cls) (member := htm)
-        return πhtm_cls
-  -- for each argument, update the parent e-elcass by adding a pointer to the
-  -- e class of htm
+        return (πhtm_cls, R.refl htm)
   for πarg in htm.args do
+    let argReason := sorry
     πarg.modify! (fun cls => cls.addParent htm πhtm_cls)
   return πhtm_cls
 
 
-abbrev HashConsTerm.add [Monad m] (htm : HashConsTerm σ) : T σ m (Ptr ``Eclass) :=
-   htm.findOrAdd
 mutual
 
 /-- unite E classes in a E graph -/
-partial def Egraph.unite (πc πd : Ptr ``Eclass) :
-  M σ (Ptr ``Eclass) := do
+partial def Egraph.unite [R : Reason ρ σ]
+  (πc πd : Ptr ``Eclass) (uniteReason : ρ) :
+  M σ ρ (Ptr ``Eclass) := do
   let πc ← ⟦ πc ⟧
   let πd ← ⟦ πd ⟧
   if πc == πd then return πc
@@ -204,9 +217,11 @@ partial def Egraph.unite (πc πd : Ptr ``Eclass) :
   πparent.modifyM! (fun c => do return {
     c with subtreeSize := c.subtreeSize + (← πchild.deref!).subtreeSize
   })
+  let childMembers := (← πchild.deref!).members.map
+    fun (arg, reason) => (arg, R.trans reason uniteReason)
   πparent.modifyM! (fun c => do return {
     c with
-    members := c.members ++ (← πchild.deref!).members,
+    members := c.members ++ childMembers,
     parentTerms := c.parentTerms ++ (← πchild.deref!).parentTerms
   })
   πchild.modify! (fun c => { c with members := #[], parentTerms := #[] })
@@ -214,11 +229,12 @@ partial def Egraph.unite (πc πd : Ptr ``Eclass) :
   return πparent
 
 /-- rebuild E-class. -/
-partial def Egraph.rebuild (πc : Ptr ``Eclass) : M σ Unit := do
+partial def Egraph.rebuild [R : Reason ρ σ]
+  (πc : Ptr ``Eclass) : M σ ρ Unit := do
   let mut parents := #[]
   for (htm, πhtm_old_cls) in (← πc.deref!).parentTerms do
-    let πhtm_new_cls ← htm.findOrAdd
-    let πhtm_new_cls ← Egraph.unite πhtm_old_cls πhtm_new_cls
+    let πhtm_new_cls ← htm.findOrAdd (R := R)
+    let πhtm_new_cls ← Egraph.unite πhtm_old_cls πhtm_new_cls (R := R)
     modify (fun s => { s with term2classp := (s.term2classp.erase htm)} )
     let htm ← ⟦ htm ⟧
     modify (fun s => { s with term2classp := s.term2classp.insert htm πhtm_new_cls } )
@@ -275,17 +291,11 @@ structure Equivalence (σ : Type) where
   rhs : Pattern σ
 
 
-inductive Progress where
-| MadeProgress
-| NoProgress
 
--- TODO: add explanation generation.
-inductive Explanation (σ : Type)
-| reflexivity
--- TODO: cache equivalences by name / pointer
-| rewrite (eqv : Equivalence σ) (subst : Subst σ)
--- transitivity of rewrites
-| transitivity (middle : HashConsTerm σ)
+/-- Non-boolean blind inductive to represent progress -/
+inductive Progress
+| NoProgress
+| MadeProgress
 
 /-- Return whether the pattern successfully rewrote on the Egraph,
   and the matching substitution if it did. -/
