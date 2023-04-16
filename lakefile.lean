@@ -42,8 +42,9 @@ lean_lib EggTactic{
 }
   -- add configuration options here
 
+require LSpec from git "git@github.com:lurk-lab/LSpec.git" @ "88f7d23"
+
 --require «aesop» from git  "https://github.com/JLimperg/aesop" @ "3fb480b3d7b1e70e488e479e94875bb94d7c8ade"
 -- require smt from git "https://github.com/ufmg-smite/lean-smt.git"@"main"
 
 -- require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "master"
-

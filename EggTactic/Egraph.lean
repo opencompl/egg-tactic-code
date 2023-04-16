@@ -3,17 +3,21 @@ open Std HashMap
 
 namespace Egraph
 
--- We key pointers with names instead of types so that
--- we can have names of structures that does not create a cycle.
--- When defining a structure, we are not allowed to use the
--- type of the structure in the body of the structure.
--- We dodge this restriction by converting to names.
--- Convention: all pointer variables will have name starting
--- with π. e.g. πx is a pointer to x.
+/-- We key pointers with names instead of types so that
+we can have names of structures that does not create a cycle.
+When defining a structure, we are not allowed to use the
+type of the structure in the body of the structure.
+We dodge this restriction by converting to names.
+Convention: all pointer variables will have name starting
+with π. e.g. πx is a pointer to x. -/
 structure Ptr (_α : Name) where ix : UInt64
 deriving DecidableEq, Hashable,Inhabited
 
--- typeclass that can dereference points of type 'o' named by 'α'
+class StoreM (m : Type → Type) (α : Type)  where
+  storeGet : m (Array α)
+  storeAppend : α → m (Array α)
+
+/-- typeclass that can dereference points of type 'o' named by 'α' -/
 class DerefM (m : Type → Type) (α : Name) (o : outParam Type) where
   deref : Ptr α -> m (Option o)
   set : Ptr α -> o -> m Unit
@@ -24,7 +28,7 @@ def DerefM.new [Monad m] [DerefM m α o] [Inhabited o] (v : o) : m (Ptr α) := d
   set ptr v
   return ptr
 
--- dereference pointer and run action. action must succeed.
+/-- dereference pointer and run action. action must succeed. -/
 def Ptr.modifyM! [Monad m] [DerefM m α o] [Inhabited o]
   (f : o → m o) (p : Ptr α) : m Unit := do
   let v ← Option.get! <$> (DerefM.deref p)
@@ -43,12 +47,11 @@ notation "*?" x => DerefM.deref x -- dereference a pointer
 set_option quotPrecheck false in
 notation "*" x => (← Ptr.deref! x) -- dereference a pointer
 notation p " ^= " v => DerefM.set p v -- set a pointer to a value
--- notation "^" x => Ptr `x
 
--- terms.
+/-- terms. -/
 structure HashConsTerm (σ : Type) where
   head : σ
-  args : Array (Ptr `Egraph.Eclass)
+  args : Array (Ptr `Egraph.Eclass) := #[]
 deriving BEq, DecidableEq, Hashable, Inhabited
 
 -- equivalence class of terms.
@@ -61,23 +64,26 @@ structure Eclass (σ : Type) where
   subtreeSize : UInt64 -- union find subtree size
 deriving BEq, DecidableEq, Hashable, Inhabited
 
--- create a singleton e class.
+/-- create a singleton e class. -/
 def Eclass.singleton (πcanon : Ptr ``Eclass) (member : HashConsTerm σ) : Eclass σ where
   members := #[member]
   parentTerms := {}
   πcanon := πcanon
   subtreeSize := 0
 
--- add a term and the e-class that owns the term as the parent
--- of this e-class.
--- we add the parent e-class as well as the term since this informatoin
--- is useful when moving terms around during the update.
+/-- add a term and the e-class that owns the term as the parent
+of this e-class.
+we add the parent e-class as well as the term since this informatoin
+is useful when moving terms around during the update. --/
 def Eclass.addParent (cls : Eclass σ)
   (tm : HashConsTerm σ)
   (πtm_cls : Ptr ``Eclass) :=
   { cls with parentTerms := cls.parentTerms.push (tm, πtm_cls) }
 
--- the data of the Egraph state.
+
+abbrev Error : Type := String
+
+/-- the data of the Egraph state. -/
 structure State (σ : Type)  where
   σinhabited : Inhabited σ
   σbeq : DecidableEq σ
@@ -85,6 +91,7 @@ structure State (σ : Type)  where
   eclasses : Memory (Eclass σ)
   hashconsterms : Memory (HashConsTerm σ)
   term2classp : HashMap (HashConsTerm σ) (Ptr ``Eclass)
+  errors : Array Error
 
 def State.new [Inhabited σ] [DecidableEq σ] [Hashable σ] : State σ where
   σinhabited := inferInstance
@@ -93,11 +100,18 @@ def State.new [Inhabited σ] [DecidableEq σ] [Hashable σ] : State σ where
   eclasses := {}
   hashconsterms := {}
   term2classp := {}
+  errors := #[]
 
-abbrev M σ α := StateM (State σ) α
 
--- deref an e-class
-instance : DerefM (M σ) ``Eclass (Eclass σ) where
+/-- TODO: add error -/
+abbrev T (σ : Type) (m : Type → Type) (α : Type) : Type := StateT (State σ) m α
+abbrev M σ α := T σ Id α
+
+def logError [Monad m] : Error → T σ m Unit
+| e => modify fun s => { s with errors := s.errors.push e }
+
+/-- deref an e-class -/
+instance [Monad m] : DerefM (T σ m) ``Eclass (Eclass σ) where
   deref ptr := do
     return (← get).eclasses.find? ptr.ix
   set ptr v := modify (fun s =>
@@ -106,7 +120,7 @@ instance : DerefM (M σ) ``Eclass (Eclass σ) where
     let ptr := Ptr.mk <| UInt64.ofNat (← get).eclasses.size
     return ptr
 
-instance : DerefM (M σ) ``HashConsTerm (HashConsTerm σ) where
+instance [Monad m] : DerefM (T σ m) ``HashConsTerm (HashConsTerm σ) where
   deref ptr := do
     return (← get).hashconsterms.find? ptr.ix
   set ptr v := modify (fun s =>
@@ -116,12 +130,13 @@ instance : DerefM (M σ) ``HashConsTerm (HashConsTerm σ) where
     return ptr
 
 class Canonicalize (σ : Type) (α : Type) where
-  canonicalize : α → M σ α
+  canonicalize [Monad m] : α → T σ m α
 
--- return canonical pointer
+/-- return canonical pointer -/
 notation "⟦" x "⟧" => Canonicalize.canonicalize x
 
-partial def canonicalizeClass (πcls :  Ptr ``Eclass) : M σ (Ptr ``Eclass) := do
+partial def canonicalizeClass [Monad m]
+  (πcls :  Ptr ``Eclass) : T σ m (Ptr ``Eclass) := do
     let cls : (Eclass σ) ← πcls.deref!
     if cls.πcanon == πcls
     then return πcls
@@ -133,8 +148,8 @@ partial def canonicalizeClass (πcls :  Ptr ``Eclass) : M σ (Ptr ``Eclass) := d
 instance : Canonicalize σ (Ptr ``Eclass) where
   canonicalize := canonicalizeClass
 
- partial def canonicalizeHashConsTerm (htm : HashConsTerm σ) :
-  M σ (HashConsTerm σ) := do
+ partial def canonicalizeHashConsTerm [Monad m] (htm : HashConsTerm σ) :
+  T σ m (HashConsTerm σ) := do
   let _ : Inhabited σ := (← get).σinhabited
   let htm := { htm with args := (← htm.args.mapM canonicalizeClass) }
   return htm
@@ -142,16 +157,16 @@ instance : Canonicalize σ (Ptr ``Eclass) where
 instance : Canonicalize σ (HashConsTerm σ) where
   canonicalize := canonicalizeHashConsTerm
 
--- TODO: rename to class?
-partial def HashConsTerm.find! (htm : HashConsTerm σ) :
-  M σ (Ptr ``Eclass) := do
+/-- Find e-class of the given E graph. -/
+partial def HashConsTerm.find! [Monad m] (htm : HashConsTerm σ) :
+  T σ m (Ptr ``Eclass) := do
   match (← get).term2classp.find? (← ⟦htm⟧) with
   | .some cls => return cls
   | .none => panic! "unable to find e-class"
 
 
-partial def HashConsTerm.findOrAdd (htm : HashConsTerm σ) :
-  M σ (Ptr ``Eclass) := do
+partial def HashConsTerm.findOrAdd [Monad m] (htm : HashConsTerm σ) :
+  T σ m (Ptr ``Eclass) := do
   let htm ← ⟦htm⟧
   let πhtm_cls ←
     match (← get).term2classp.find?  htm with
@@ -167,10 +182,14 @@ partial def HashConsTerm.findOrAdd (htm : HashConsTerm σ) :
     πarg.modify! (fun cls => cls.addParent htm πhtm_cls)
   return πhtm_cls
 
+
+abbrev HashConsTerm.add [Monad m] (htm : HashConsTerm σ) : T σ m (Ptr ``Eclass) :=
+   htm.findOrAdd
 mutual
 
--- rebuild E-graph
-partial def Egraph.unite (πc πd : Ptr ``Eclass) : M σ (Ptr ``Eclass) := do
+/-- unite E classes in a E graph -/
+partial def Egraph.unite (πc πd : Ptr ``Eclass) :
+  M σ (Ptr ``Eclass) := do
   let πc ← ⟦ πc ⟧
   let πd ← ⟦ πd ⟧
   if πc == πd then return πc
@@ -194,7 +213,7 @@ partial def Egraph.unite (πc πd : Ptr ``Eclass) : M σ (Ptr ``Eclass) := do
   Egraph.rebuild πparent
   return πparent
 
--- rebuild E-class.
+/-- rebuild E-class. -/
 partial def Egraph.rebuild (πc : Ptr ``Eclass) : M σ Unit := do
   let mut parents := #[]
   for (htm, πhtm_old_cls) in (← πc.deref!).parentTerms do
@@ -205,10 +224,14 @@ partial def Egraph.rebuild (πc : Ptr ``Eclass) : M σ Unit := do
     modify (fun s => { s with term2classp := s.term2classp.insert htm πhtm_new_cls } )
     parents := parents.push (htm, πhtm_new_cls)
   πc.modify! (fun c => { c with parentTerms := parents})
+
 end
 
 abbrev PatVarIx := UInt64
 abbrev Subst σ := HashMap PatVarIx (HashConsTerm σ)
+
+/-- empty substitution -/
+def Subst.empty : Subst σ := HashMap.empty
 
 -- E matching patterns
 inductive Pattern (σ : Type)
@@ -226,10 +249,10 @@ partial def Pattern.instantiate? (s: Subst σ): Pattern σ → M σ (Option (Has
     | .some tm => args := args.push (← tm.find!)
    return HashConsTerm.mk head args
 
-partial def Pattern.match [DecidableEq σ] [Monad m]
+partial def Pattern.matcher [DecidableEq σ] [Monad m]
   [DerefM m ``Egraph.Eclass (Egraph.Eclass σ)]
   (pat : Pattern σ)
-  (htm : HashConsTerm σ) (s: Subst σ) : m (Array (Subst σ)) := do
+  (htm : HashConsTerm σ) (s : Subst σ) : m (Array (Subst σ)) := do
   match pat with
   | .var ix =>
     match s.find? ix with
@@ -243,6 +266,45 @@ partial def Pattern.match [DecidableEq σ] [Monad m]
       for (πargcls, parg) in htm.args.zip pargs do
         let cls : Eclass σ ← πargcls.deref!
         for cls_htm in cls.members do
-          substs ← substs.concatMapM (parg.match cls_htm)
+          substs ← substs.concatMapM (parg.matcher cls_htm)
       return substs
     else return #[]
+
+structure Equivalence (σ : Type) where
+  lhs : Pattern σ
+  rhs : Pattern σ
+
+
+inductive Progress where
+| MadeProgress
+| NoProgress
+
+-- TODO: add explanation generation.
+inductive Explanation (σ : Type)
+| reflexivity
+-- TODO: cache equivalences by name / pointer
+| rewrite (eqv : Equivalence σ) (subst : Subst σ)
+-- transitivity of rewrites
+| transitivity (middle : HashConsTerm σ)
+
+/-- Return whether the pattern successfully rewrote on the Egraph,
+  and the matching substitution if it did. -/
+partial def Equivalence.run (e: Equivalence σ)
+ [DecidableEq σ] : M σ Progress := do
+   let mut progress := Progress.NoProgress
+   for (_k, htm) in (← get).hashconsterms.toArray do
+     let substs ← e.lhs.matcher htm Subst.empty
+     for subst in substs do
+       progress := Progress.MadeProgress
+       let htm'? ← e.rhs.instantiate? subst
+       -- | Do we know which substitutions will yield the same E-class?
+       -- We want to enumerate (E/subst)/cls instead of (E/cls)/subst.
+       -- ^ The above feels like a non-trivial insight, if there is an
+       -- algorithm for it.
+       let htm' ← match htm'? with
+         | .some v => pure v
+         | .none =>
+             logError s!"RHS has more free vars than LHS"
+             return progress
+       let _cls ← Egraph.unite  (← htm.find!) (← htm'.find!)
+   return progress
