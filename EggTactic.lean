@@ -37,7 +37,7 @@ inductive EqProof where
 | rfl 
 | sym_ (prf : EqProof)
 | sequence_ (prf1 prf2 : EqProof)
-| replace (oldPtr newPtr : Ptr) (prf : EqProof)
+| replace (oldExpr newExpr : Expr) (prf : EqProof)
 deriving BEq, Hashable
 
 def parenIf : Bool → Format → Format
@@ -167,6 +167,7 @@ partial def ptr2repWithProof (p : Ptr) : EggM (RepPtr × EqProof) := do
 def ptr2rep (p : Ptr) : EggM RepPtr := do
   return (← ptr2repWithProof p).fst
 
+
 def egraphDeref : Ptr → EggM ExprHashCons
 | p => do return (← get).egraph.rep2canon.find! (← ptr2rep p) 
 
@@ -175,6 +176,21 @@ def canonicalizeHashCons (ehc : ExprHashCons) : EggM ExprHashCons :=
 
 def ExprHashCons.replaceAllUsesWith (old new : Ptr) (ehc : ExprHashCons) : ExprHashCons :=
   ehc.map (fun ptr => if ptr == old then new else ptr )
+
+-- | TODO: write a fusion law so we don't traverse structure twice?
+def ExprF.toExpr : ExprF Expr → Expr 
+| .const declName us => .const declName us
+| .app f arg => .app f arg
+| .lit l => .lit l
+| .fvar fvarId => .fvar fvarId
+
+mutual -- TOEXPR
+partial def ExprHashCons.toExpr (eh : ExprHashCons) : EggM Expr := do
+  return ExprF.toExpr (← eh.mapM Ptr.toExpr)
+
+partial def Ptr.toExpr (ptr : Ptr) : EggM Expr := do 
+  ExprHashCons.toExpr (← egraphDeref ptr)
+end -- TOEXPR
 
 def egraphAppendUser (userPtr : Ptr) (usedPtr : RepPtr) 
   (g : Egraph) : Egraph := 
@@ -269,14 +285,16 @@ partial def egraphPropagate : EggM Unit :=
           -- TODO: I might need to store the actual 'Expr' in the proof.
           -- TODO: Maybe I should cache the proof, just store the (rhs, lhs)
           --  pair in the state.
-          let proof := EqProof.replace (oldPtr := rhs) (newPtr := lhs) (prf := rhs2lhs)
+          let proof := EqProof.replace
+            (oldExpr := ← Ptr.toExpr rhs)
+            (newExpr := ← Ptr.toExpr lhs)
+            (prf := rhs2lhs)
           egraphUnite userPtr user'Ptr proof
       -- 4. canon2ptr : HashMap ExprHashCons Ptr
       egraph := { egraph with canon2ptr := egraph.canon2ptr.erase (← egraphDeref rhsrep)}
       return egraph
       
 end -- UNITE
-
 
 -- saturate the Egraph with respect to an equality, and return
 -- an explanation of why 'lhs' = 'rhs' if possible
@@ -309,7 +327,6 @@ def runProof : EqProof → TacticM Unit
     | true => pure ()
     | false => throwError "unable to run Lean proof 'prf'."
 | .sym_ prf => do 
-  let goal ← getMainGoal 
   let freshMVar ← mkFreshExprMVar (← getMainTarget)
   match ← isDefEq (Expr.mvar (← getMainGoal)) (← mkEqSymm freshMVar) with
   | true => pure ()
@@ -319,11 +336,9 @@ def runProof : EqProof → TacticM Unit
 | .sequence_ prf1 prf2 => do
   runProof prf1
   runProof prf2
-| .replace old new prf => do
+| .replace oldExpr newExpr prf => do
   -- first create an mvar of type (old = new) and use that to rewrite the rest.
   -- then prove (old = new) by using rewrite via 'prf'.
-  let oldExpr : Expr := sorry
-  let newExpr : Expr := sorry
   let eqType ← mkEq oldExpr newExpr
   let replaceMVar ← mkFreshExprMVar eqType
     -- note that we use `rewrite` instead of the more targeted
