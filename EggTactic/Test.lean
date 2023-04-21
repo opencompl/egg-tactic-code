@@ -9,12 +9,29 @@ set_option trace.EggTactic.egg true
 -- We can't just use the goal state because the goal state is the result of the rewrite.
 
 
-theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
+theorem testRfl (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
   intros;
   eggxplosion [H]
 }
 
-#print testSuccess0
+#print testRfl
+
+
+theorem testSym (anat: Nat) (bnat: Nat) (H: anat = bnat): bnat = anat := by {
+  intros;
+  eggxplosion [H]
+}
+
+#print testSym
+
+
+theorem testTrans (anat bnat cnat : Nat) (H : bnat = anat) (K : cnat = bnat)
+  : anat = cnat := by {
+  intros;
+  eggxplosion [H, K]
+}
+
+#print testTrans
 
 
 set_option pp.analyze true in
@@ -26,6 +43,7 @@ theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
   -- rewrite [d_eq_e]
   -- rfl
   eggxplosion [b_eq_d, d_eq_e]
+  done
 
 
 #print testSuccess
