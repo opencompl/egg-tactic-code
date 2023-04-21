@@ -43,7 +43,6 @@ theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
   -- rewrite [d_eq_e]
   -- rfl
   eggxplosion [b_eq_d, d_eq_e]
-  done
 
 
 #print testSuccess

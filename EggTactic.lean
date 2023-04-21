@@ -48,7 +48,7 @@ def parenIf : Bool → MessageData → MessageData
 instance : ToMessageData EqProof where
   toMessageData e :=
   let rec go : Nat → EqProof → MessageData -- surrounding precedence. higher binds tighter
-  | _, .leanProof e => toMessageData e
+  | _, .leanProof e => m!"'expr:{toMessageData e}'"
   | _i, .rfl => "rfl"
   | _i, .sym_ p => m!"sym {go 100 p}"
   | i, .sequence_ p1 p2 => parenIf (i > 0) m!"{go 0 p1}; {go 0 p2}"
@@ -462,27 +462,25 @@ def egraphGetEqProof (lhsPtr rhsPtr : Ptr) : EggM (Option EqProof) := withIndent
 def runFinisher (prf? : Option Expr) : EggM Unit := withIndent do
   trace[EggTactic.egg] m!"{←getIndent}runFinisher=>"
   trace[EggTactic.egg] m!"{←getIndent2}prf: {prf?}"
-  -- pruneSolvedGoals
+  trace[EggTactic.egg] m!"{←getIndent2}main goal type: {← getMainTarget}"
+  trace[EggTactic.egg.debug] m!"{←getIndent2}main goal: {← getMainGoal}"
   if (← getGoals).isEmpty then
     trace[EggTactic.egg] m!"{←getIndent2}main goal empty."
+    throwError "{←getIndent2}main goal empty."
   else
-    trace[EggTactic.egg] m!"{←getIndent2}main goal type: {← getMainTarget}"
-    trace[EggTactic.egg.debug] m!"{←getIndent2}main goal: {← getMainGoal}"
     match prf? with
     | .some prf =>
-      match ← isDefEq (.mvar (← getMainGoal)) prf with
+      trace[EggTactic.egg] m!"{←getIndent2}prf type: {← inferType prf}"
+      match ← isDefEq (← getMainTarget) (← inferType prf) with
       | true =>
-        trace[EggTactic.egg] m!"{← getIndent2}checking that goal type has no mvars."
-        ensureHasNoMVars (← getMainTarget)
-        trace[EggTactic.egg] m!"{← getIndent2}checking that goal expr has no mvars."
-        ensureHasNoMVars (.mvar (← getMainGoal))
-        trace[EggTactic.egg] m!"{← getIndent2}<= defEq."
+        withMainContext (closeMainGoal prf)
+        trace[EggTactic.egg] m!"{← getIndent2}<= defEq ∎"
       | false =>
-        trace[EggTactic.egg] m!"{← getIndent2}<=ERROR: failed to prove {← getMainTarget} with {prf?}"
-        throwError m!"{← getIndent2}<=ERROR: failed to prove {← getMainTarget} with {prf?}"
+        trace[EggTactic.egg] m!"{← getIndent2}<=ERROR: failed to unify '{← getMainTarget}' with '{← inferType prf}'"
+        throwError "{← getIndent2}<=ERROR: failed to unify '{← getMainTarget}' with '{← inferType prf}'"
     | .none =>
       (← getMainGoal).refl
-    replaceMainGoal []
+      trace[EggTactic.egg] m!"{← getIndent2}<= refl ∎"
 
 
 -- NOTE: testUnassigned
@@ -490,10 +488,11 @@ def runFinisher (prf? : Option Expr) : EggM Unit := withIndent do
 -- We allow unassigned variables because we use metavars to create 'holes' in the proof.
 open Lean Meta Elab Tactic in
 def runProof (prf : EqProof) :  EggM Unit := withIndent do
-  trace[EggTactic.egg] m!"{←getIndent}runProof '{prf}=>"
+  trace[EggTactic.egg] m!"{←getIndent}runProof '{prf}'=>"
+  trace[EggTactic.egg] m!"{←getIndent2}⊢ {← getMainTarget}"
   trace[EggTactic.egg.debug] m!"{←getIndent2}goal:"
   trace[EggTactic.egg.debug] m!"{←getIndent2}{← getMainGoal}"
-  let (_, hypLhs, hypRhs) ←
+  let (lhsrhsType, hypLhs, hypRhs) ←
     match (← matchEq? (← getMainTarget)) with
     | .none =>
       trace[EggTactic.egg] m!"{←getIndent2}<= ERROR: goal is not equalty"
@@ -515,8 +514,10 @@ def runProof (prf : EqProof) :  EggM Unit := withIndent do
     setGoals [mainGoal]
     runFinisher (← mkEqSymm symProof)
   | .sequence_ prf1 prf2 => withIndent do
+
+    let mainGoal ← getMainGoal
     -- TODO: I need to create a metavar for the intermediate type
-    let midTy ← mkFreshTypeMVar
+    let midTy ← mkFreshExprMVar (type? := lhsrhsType)
     let goalLhsMid ← mkFreshExprMVar (type? := ← mkEq hypLhs midTy)
     let goalMidRhs ← mkFreshExprMVar (type? := ← mkEq midTy hypRhs)
 
@@ -527,6 +528,7 @@ def runProof (prf : EqProof) :  EggM Unit := withIndent do
     setGoals [goalMidRhs.mvarId!]
     runProof prf2
 
+    setGoals [mainGoal]
     let mainPrf ← mkEqTrans goalLhsMid goalMidRhs
     runFinisher mainPrf
 
@@ -626,6 +628,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   | .some prf =>
       trace[EggTactic.egg] "found equality proof '{prf}' for '{← getMainTarget}'"
       runProof prf
+      trace[EggTactic.egg] "finished running proof ∎"
   | .none =>
       trace[EggTactic.egg] m!"goal LHS '{goalLhsPtr}' /= RHS '{goalRhsPtr}'"
       return ()
