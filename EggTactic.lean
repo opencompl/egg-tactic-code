@@ -257,7 +257,7 @@ instance  [ToMessageDataM α] [ToMessageDataM β] : ToMessageDataM (α × β) wh
 def ExprF.toMessageDataM (fmt : α → EggM MessageData) : ExprF α → EggM MessageData
 | .const declName us => return m!"const:{declName} {us}"
 | .fvar fvarId => return m!"fvar:{← fvarId.getUserName}"
-| .app f arg => do return m!"({← fmt f} {← fmt arg})"
+| .app f arg => do return m!"({← fmt f}${← fmt arg})"
 | .lit l => do return m!"lit:{repr l}"
 
 instance [ToMessageDataM α] : ToMessageDataM (ExprF α) where
@@ -585,19 +585,19 @@ def rewriteAt (mvarId : MVarId) (e : Expr) (heq : Expr)
 
 
 open Lean Meta Elab Tactic in
-partial def mkProof (prf : EqProof) : EggM Expr := withIndent do
-  trace[EggTactic.egg] m!"{←getIndent}mkProof '{← msgM prf}'=>"
+partial def EqProof.toExpr (prf : EqProof) : EggM Expr := withIndent do
+  trace[EggTactic.egg] m!"{←getIndent}toExpr '{← msgM prf}'=>"
   trace[EggTactic.egg] m!"{←getIndent2}⊢ {prf.oldExpr} = {prf.newExpr}"
   let goalTy ← mkEq prf.oldExpr prf.newExpr
   match prf with
   | .rfl x =>
       mkEqRefl prf.oldExpr
   | .sym_ p =>
-     mkEqSymm (← mkProof p)
+     mkEqSymm (← toExpr p)
   | .leanProof old prf new =>
     return prf
   | .sequence_ prf1 prf2 => withIndent do
-    mkEqTrans (← mkProof prf1) (← mkProof prf2)
+    mkEqTrans (← toExpr prf1) (← toExpr prf2)
   | .exprF prfF =>
     trace[EggTactic.egg] m!"do not know how to run exprF: {← msgM prfF}"
     throwError m!"do not know how to run exprF: {← msgM prfF}"
@@ -608,8 +608,8 @@ partial def mkProof (prf : EqProof) : EggM Expr := withIndent do
 -- ====================
 -- We allow unassigned variables because we use metavars to create 'holes' in the proof.
 open Lean Meta Elab Tactic in
-partial def runProof (prf : EqProof) :  EggM Unit := withIndent do
-  trace[EggTactic.egg] m!"{←getIndent}runProof '{← msgM prf}'=>"
+partial def EqProof.run (prf : EqProof) :  EggM Unit := withIndent do
+  trace[EggTactic.egg] m!"{←getIndent}EqProof.run '{← msgM prf}'=>"
   trace[EggTactic.egg] m!"{←getIndent2}⊢ {← getMainTarget}"
   trace[EggTactic.egg.debug] m!"{←getIndent2}goal:"
   trace[EggTactic.egg.debug] m!"{←getIndent2}{← getMainGoal}"
@@ -619,67 +619,7 @@ partial def runProof (prf : EqProof) :  EggM Unit := withIndent do
       trace[EggTactic.egg] m!"{←getIndent2}<= ERROR: goal is not equalty"
       throwError "goal state is not equality"
     | .some data => pure data
-  match prf with
-  | .rfl x => withIndent do
-     runFinisher .none
-  | .leanProof old prf new => withIndent do
-     runFinisher prf
-  | .sym_ prf => withIndent do
-    let symType ← mkEq hypRhs hypLhs
-    let symProof ← mkFreshExprMVar (type? := symType)
-
-    let mainGoal ← getMainGoal
-    setGoals [symProof.mvarId!]
-    runProof prf
-
-    setGoals [mainGoal]
-    runFinisher (← mkEqSymm symProof)
-  | .sequence_ prf1 prf2 => withIndent do
-
-    let mainGoal ← getMainGoal
-    -- TODO: I need to create a metavar for the intermediate type
-    let midTy ← mkFreshExprMVar (type? := lhsrhsType)
-    let goalLhsMid ← mkFreshExprMVar (type? := ← mkEq hypLhs midTy)
-    let goalMidRhs ← mkFreshExprMVar (type? := ← mkEq midTy hypRhs)
-
-    -- do not use `setMainGoal`, as that assumes we have something called as a main goal.
-    setGoals [goalLhsMid.mvarId!]
-    runProof prf1
-
-    setGoals [goalMidRhs.mvarId!]
-    runProof prf2
-
-    setGoals [mainGoal]
-    let mainPrf ← mkEqTrans goalLhsMid goalMidRhs
-    runFinisher mainPrf
-  | .exprF exprFPrf => do
-    trace[EggTactic.egg] m!"{←getIndent2}--exprF {← msgM exprFPrf}--"
-    let mainGoal ← exprFPrf.foldlM (σ := MVarId) (state := ← getMainGoal) fun mainGoal p => do
-      -- prove the rewrite
-      trace[EggTactic.egg] m!"{←getIndent2}subterm equality: {p.oldExpr} ={← msgM p}= {p.newExpr}"
-      let pMvar ← mkFreshExprMVar (type? := ← mkEq p.oldExpr p.newExpr)
-      setGoals [pMvar.mvarId!]
-      runProof p
-      -- runFinisher .none -- do I need this?
-      trace[EggTactic.egg] m!"{←getIndent2}closed subgoal ∎"
-
-      -- rewrite subterm in main goal
-      trace[EggTactic.egg] m!"{←getIndent2}rewriting {← msgM p} in main goal ⊢{← mainGoal.getType}"
-      setGoals [mainGoal]
-      let rewriteResult ← (← getMainGoal).rewrite (← getMainTarget) pMvar
-      match rewriteResult.mvarIds with
-      | [newMainGoal] => do
-        trace[EggTactic.egg] m!"{←getIndent2}new main goal ⊢{← newMainGoal.getType}"
-        pure newMainGoal
-      | errGoals =>
-          trace[EggTactic.egg] m!"{←getIndent2}ERROR: expected exactly 1 goal, but found {errGoals.length} goals"
-          for goal in errGoals do
-            trace[EggTactic.egg] m!"{←getIndent2}ERROR: ⊢{goal}"
-          throwError "expected exactly one goal, but instead found {errGoals} as goals"
-    -- main term should be 'rfl'.
-    setGoals [mainGoal]
-    trace[EggTactic.egg] m!"{←getIndent2}proving final goal ⊢{← mainGoal.getType}"
-    runFinisher .none
+  withMainContext (closeMainGoal (← prf.toExpr))
 
 
 open Lean Elab Meta Tactic in
@@ -803,7 +743,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
   match ← egraphGetEqProof goalLhsPtr goalRhsPtr with
   | .some prf =>
       trace[EggTactic.egg] "found equality proof '{← msgM prf}' for '{← getMainTarget}'"
-      runProof prf
+      EqProof.run prf
       trace[EggTactic.egg] "finished running proof ∎"
   | .none =>
       trace[EggTactic.egg] m!"goal LHS '{goalLhsPtr}' /= RHS '{goalRhsPtr}'"
