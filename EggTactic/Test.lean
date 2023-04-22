@@ -1,12 +1,14 @@
 import EggTactic
 
 set_option trace.EggTactic.egg true
--- TODO @andres: what egg gives us back is wrong. What we really need to know is the rewrite term that we need to use.
--- This means we should build the sexpr (<rewrite-term> <arg-1> ... <arg-n>) and then use this to perform the rewrite.
--- Instead, what `egg` gives us is the goal state after the rewrite.
---
--- This is a problem because we need to know the rewrite term to perform the rewrite.
--- We can't just use the goal state because the goal state is the result of the rewrite.
+-- TODO @andres: what egg gives us back is wrong. What we really need
+-- to know is the rewrite term that we need to use.  This means we
+-- should build the sexpr (<rewrite-term> <arg-1> ... <arg-n>) and
+-- then use this to perform the rewrite.  Instead, what `egg` gives us
+-- is the goal state after the rewrite.  This is a problem because we
+-- need to know the rewrite term to perform the rewrite.  We can't
+-- just use the goal state because the goal state is the result of the
+-- rewrite.
 
 
 theorem testRfl (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
@@ -44,7 +46,6 @@ theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
   -- rfl
   eggxplosion [b_eq_d, d_eq_e]
 
-
 #print testSuccess
 
 
@@ -56,8 +57,8 @@ theorem testSuccess0Symm (anat: Nat) (bnat: Nat) (H: bnat = anat): anat = bnat :
 #print testSuccess0Symm
 
 
-theorem testLeaf2Tree (anat bnat : Nat) (H : anat = bnat)
-  (f : Nat → Nat → Nat) : f anat anat = f bnat bnat := by {
+theorem testApp1 (anat bnat : Nat) (H : anat = bnat)
+  (f : Nat → Nat) : f anat = f bnat := by {
   eggxplosion [H]
 }
 -- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
