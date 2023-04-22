@@ -55,6 +55,11 @@ theorem testSuccess0Symm (anat: Nat) (bnat: Nat) (H: bnat = anat): anat = bnat :
 
 #print testSuccess0Symm
 
+
+theorem testLeaf2Tree (anat bnat : Nat) (H : anat = bnat)
+  (f : Nat → Nat → Nat) : f anat anat = f bnat bnat := by {
+  eggxplosion [H]
+}
 -- elab "boiledEgg" "[" rewrites:ident,* "]" : tactic =>  withMainContext  do
 
 -- | test that we can run rewrites

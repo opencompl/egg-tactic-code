@@ -27,52 +27,8 @@ structure EggConfig where
 
 instance : Inhabited EggConfig where default := { }
 
-
-
 abbrev Ptr := UInt64
 abbrev RepPtr := UInt64
-
-inductive EqProof where
-| leanProof (e : Expr)
-| rfl
-| sym_ (prf : EqProof)
-| sequence_ (prf1 prf2 : EqProof)
-| replace (oldExpr newExpr : Expr) (prf : EqProof)
-deriving BEq, Hashable
-
-def parenIf : Bool → MessageData → MessageData
-| true, f => f.paren
-| false, f => f
-
--- sym a ; b -> sym (a ; b) ?
-instance : ToMessageData EqProof where
-  toMessageData e :=
-  let rec go : Nat → EqProof → MessageData -- surrounding precedence. higher binds tighter
-  | _, .leanProof e => m!"'expr:{toMessageData e}'"
-  | _i, .rfl => "rfl"
-  | _i, .sym_ p => m!"sym {go 100 p}"
-  | i, .sequence_ p1 p2 => parenIf (i > 0) m!"{go 0 p1}; {go 0 p2}"
-  | _i, .replace _ _ prf => m!"replace {go 100 prf}"
-  go 0 e -- start with minimum: 0
-
-
-instance : Inhabited EqProof where
-  default := EqProof.leanProof <| Expr.lit <| .strVal "DEFAULT"
-
-/- smart constructor for sequencing proofs -/
-def EqProof.sequence : EqProof → EqProof → EqProof
-| .rfl, x => x
-| x, .rfl => x
-| x, y => .sequence_ x y
-
-/-- smart constructor for taking symmetric version of proof --/
-def EqProof.sym : EqProof → EqProof
-| .rfl => .rfl
-| .sym_ (sequence_ (sym_ x) (sym_ y)) => sequence y x
-| .sym_ (sequence_ x y) => sequence y.sym x.sym
-| .sym_ x => x
-| x => .sym_ x
-
 
 -- | unrolled version of Expr with internal nodes
 -- replaced with α
@@ -83,6 +39,13 @@ inductive ExprF (α : Type) where
 | lit (lit : Literal)
 deriving BEq, Hashable, Inhabited
 
+
+-- | TODO: write a fusion law so we don't traverse structure twice?
+def ExprF.toExpr : ExprF Expr → Expr
+| .const declName us => .const declName us
+| .app f arg => .app f arg
+| .lit l => .lit l
+| .fvar fvarId => .fvar fvarId
 
 
 def ExprF.mapM {m : Type → Type} [Monad m] (act : α → m β) : ExprF α → m (ExprF β)
@@ -103,7 +66,7 @@ def ExprF.forM [Monad m] (act : α → m Unit) : ExprF α → m Unit
   _ ← act arg
 | .lit _ => pure ()
 
-def ExprF.foldlMGo [Monad m] (act : α → m β) (arr : Array β) : ExprF α → m (Array β)
+def ExprF.accumMGo [Monad m] (act : α → m β) (arr : Array β) : ExprF α → m (Array β)
 | .const _ _ => pure arr
 | .fvar _ => pure arr
 | .app f arg => do
@@ -112,10 +75,70 @@ def ExprF.foldlMGo [Monad m] (act : α → m β) (arr : Array β) : ExprF α →
   return arr
 | .lit _ => pure arr
 
-def ExprF.foldlM [Monad m] (act : α → m β) (e : ExprF α) : m (Array β) :=
-   e.foldlMGo act #[]
+def ExprF.accumM [Monad m] (act : α → m β) (e : ExprF α) : m (Array β) :=
+   e.accumMGo act #[]
+
+def ExprF.foldlM [Monad m] (act : σ → α → m σ) (state : σ) : ExprF α → m σ
+| .const _ _ => pure state
+| .fvar _ => pure state
+| .app f arg => do
+  let state ← act state f
+  let state ← act state arg
+  return state
+| .lit _ => pure state
 
 abbrev ExprHashCons := ExprF Ptr
+
+
+inductive EqProof where
+| leanProof (oldExpr : Expr) (prf : Expr) (newExpr : Expr)
+| rfl (obj : Expr)
+| sym_ (prf : EqProof)
+| sequence_ (prf1 prf2 : EqProof)
+| replace (oldExpr : Expr) (prf : EqProof) (newExpr : Expr)
+| exprF (prf: ExprF EqProof)
+deriving BEq, Hashable
+
+def parenIf : Bool → MessageData → MessageData
+| true, f => f.paren
+| false, f => f
+
+mutual
+partial def EqProof.oldExpr : EqProof → Expr
+| .leanProof oldExpr _e _newExpr => oldExpr
+| .rfl obj => obj
+| .sym_ prf => EqProof.newExpr prf
+| .sequence_ prf1 _prf2 => EqProof.oldExpr prf1
+| .replace oldExpr _prf _newExpr => oldExpr
+| .exprF prf => (prf.map EqProof.oldExpr).toExpr
+
+
+partial def EqProof.newExpr : EqProof → Expr
+| .leanProof _oldExpr _e newExpr => newExpr
+| .rfl obj => obj
+| .sym_ prf => EqProof.oldExpr prf
+| .sequence_ _prf1 prf2 => EqProof.newExpr prf2
+| .replace _oldExpr _prf newExpr  => newExpr
+| .exprF prf => (prf.map EqProof.newExpr).toExpr
+end
+
+
+instance : Inhabited EqProof where
+  default := EqProof.leanProof (Expr.lit <| .strVal "DEFAULT") default default
+
+/- smart constructor for sequencing proofs -/
+def EqProof.sequence : EqProof → EqProof → EqProof
+| .rfl _, x => x
+| x, .rfl _ => x
+| x, y => .sequence_ x y
+
+/-- smart constructor for taking symmetric version of proof --/
+def EqProof.sym : EqProof → EqProof
+| .rfl x => .rfl x
+| .sym_ (sequence_ (sym_ x) (sym_ y)) => sequence y x
+| .sym_ (sequence_ x y) => sequence y.sym x.sym
+| .sym_ x => x
+| x => .sym_ x
 
 
 /--
@@ -220,11 +243,15 @@ class ToMessageDataM (α : Type) where
   toMessageDataM : α → EggM MessageData
 open ToMessageDataM
 
+instance  [ToMessageDataM α] [ToMessageDataM β] : ToMessageDataM (α × β) where
+  toMessageDataM := fun (a, b) => do
+    return m!"({← toMessageDataM a}, {← toMessageDataM b})"
+
 def ExprF.toMessageDataM (fmt : α → EggM MessageData) : ExprF α → EggM MessageData
-| .const declName us => return m!"const {declName} {us}"
-| .fvar fvarId => return m!"{← fvarId.getUserName}"
+| .const declName us => return m!"const:{declName} {us}"
+| .fvar fvarId => return m!"fvar:{← fvarId.getUserName}"
 | .app f arg => do return m!"{← fmt f} {← fmt arg}"
-| .lit l => do return m!"{repr l}"
+| .lit l => do return m!"lit:{repr l}"
 
 instance [ToMessageDataM α] : ToMessageDataM (ExprF α) where
   toMessageDataM := ExprF.toMessageDataM toMessageDataM
@@ -232,53 +259,66 @@ instance [ToMessageDataM α] : ToMessageDataM (ExprF α) where
 instance [ToMessageData α] : ToMessageDataM α where -- low priority
   toMessageDataM := pure ∘ toMessageData
 
+partial def EqProof.toMessageDataM : (precedence : Nat := 0) → EqProof → EggM MessageData
+  | _, .leanProof _old prf _new => return m!"leanProof:{toMessageData prf}"
+  | _i, .rfl _obj => return "rfl"
+  | _i, .sym_ p => return m!"sym {← p.toMessageDataM 100}"
+  | i, .sequence_ p1 p2 => return parenIf (i > 0) m!"{← p1.toMessageDataM}; {← p2.toMessageDataM}"
+  | _i, .replace _ prf _ => return m!"replace:{← prf.toMessageDataM 100}"
+  | _i, .exprF prf => return m!"exprF:{← prf.toMessageDataM (EqProof.toMessageDataM)}"
+
+-- sym a ; b -> sym (a ; b) ?
+instance : ToMessageDataM EqProof where
+  toMessageDataM e := e.toMessageDataM
+
 /-- abbreviation for toMessageDataM -/
 abbrev msgM [ToMessageDataM α] : α → EggM MessageData := toMessageDataM
 
-partial def ptr2repWithProof (p : Ptr) : EggM (RepPtr × EqProof) := withIndent do
+partial def Ptr.canonicalizeWithProof (p : Ptr) : EggM (RepPtr × EqProof) := withIndent do
   let egraph := (← get).egraph
   let (parent, p2parent) := egraph.ptr2ptr.find! p
-  trace[EggTactic.egg] "{← getIndent}ptr2rep p:{p}=>"
+  trace[EggTactic.egg] "{← getIndent}Ptr.canonicalize p:{p}=>"
   if parent == p then
-    trace[EggTactic.egg] "{←getIndent2}<=parent:{parent} prf:{p2parent}"
+    trace[EggTactic.egg] "{←getIndent2}<=parent:{parent} prf:{← msgM p2parent}"
     return (p, p2parent)
   else
-    let (rep, parent2rep) ← ptr2repWithProof parent
+    let (rep, parent2rep) ← Ptr.canonicalizeWithProof parent
     let prf := EqProof.sequence p2parent parent2rep
     let egraph := { egraph with ptr2ptr := egraph.ptr2ptr.insert p (rep, prf) }
-    trace[EggTactic.egg] "{←getIndent2}<=parent:{parent} prf:{prf}"
+    trace[EggTactic.egg] "{←getIndent2}<=parent:{parent} prf:{← msgM prf}"
     modifyGet fun s => ((rep, prf), { s with egraph := egraph })
 
-def ptr2rep (p : Ptr) : EggM RepPtr := do
-  return (← ptr2repWithProof p).fst
+def Ptr.canonicalizeNoProof (p : Ptr) : EggM RepPtr := do
+  return (← Ptr.canonicalizeWithProof p).fst
 
+def Ptr.deref (p : Ptr) : EggM ExprHashCons :=  do
+  return (← get).egraph.rep2canon.find! p
 
-def egraphDeref : Ptr → EggM ExprHashCons
-| p => do return (← get).egraph.rep2canon.find! (← ptr2rep p)
+def RepPtr.deref (p : RepPtr) : EggM ExprHashCons := Ptr.deref p
 
-def canonicalizeHashCons (ehc : ExprHashCons) : EggM ExprHashCons := withIndent do
-  trace[EggTactic.egg] "{←getIndent}canonicalize {← msgM ehc}"
-  let out ← ehc.mapM ptr2rep
-  trace[EggTactic.egg] "{←getIndent2}{← msgM out}"
-  return out
-
-def ExprHashCons.replaceAllUsesWith (old new : Ptr) (ehc : ExprHashCons) : ExprHashCons :=
-  ehc.map (fun ptr => if ptr == old then new else ptr )
-
--- | TODO: write a fusion law so we don't traverse structure twice?
-def ExprF.toExpr : ExprF Expr → Expr
-| .const declName us => .const declName us
-| .app f arg => .app f arg
-| .lit l => .lit l
-| .fvar fvarId => .fvar fvarId
 
 mutual -- TOEXPR
 partial def ExprHashCons.toExpr (eh : ExprHashCons) : EggM Expr := do
   return ExprF.toExpr (← eh.mapM Ptr.toExpr)
 
 partial def Ptr.toExpr (ptr : Ptr) : EggM Expr := do
-  ExprHashCons.toExpr (← egraphDeref ptr)
+  ExprHashCons.toExpr (← Ptr.deref ptr)
 end -- TOEXPR
+
+def ExprHashCons.canonicalize (ehc : ExprHashCons) : EggM (ExprF (Ptr × EqProof)) := withIndent do
+  trace[EggTactic.egg] "{←getIndent}canonicalize {← msgM ehc}"
+  let out ← ehc.mapM (fun p => do
+    let e  : Expr ← (← p.deref).toExpr
+    let (pcanon, eqproof) ← Ptr.canonicalizeWithProof p
+    let ecanon : Expr ← (← pcanon.deref).toExpr
+    return (pcanon, EqProof.replace e eqproof ecanon))
+  trace[EggTactic.egg] "{←getIndent2}{← msgM out}"
+  return out
+
+
+def ExprHashCons.replaceAllUsesWith (old new : Ptr) (ehc : ExprHashCons) : ExprHashCons :=
+  ehc.map (fun ptr => if ptr == old then new else ptr )
+
 
 def egraphAppendUser (userPtr : Ptr) (usedPtr : RepPtr)
   (g : Egraph) : EggM Egraph := withIndent do
@@ -286,11 +326,25 @@ def egraphAppendUser (userPtr : Ptr) (usedPtr : RepPtr)
   let users := g.rep2users.find! usedPtr
   return { g with rep2users := g.rep2users.insert usedPtr (users.push userPtr) }
 
+mutual
+partial def EqProof.isRfl : EqProof → Bool
+| .rfl _ => true
+| .replace _ prf _ => prf.isRfl
+| .exprF prf => prf.isRfl
+| _ => false
+
+partial def ExprF.isRfl (e : ExprF EqProof) : Bool :=
+  Id.run <| e.foldlM (m := Id) (state := True) (fun b prf => b && prf.isRfl)
+end
+
+
 def egraphAddHashCons (ehc : ExprHashCons) : EggM Ptr := withIndent do
   trace[EggTactic.egg] "{←getIndent}+hashcons 'ehc:{← msgM ehc}'=>" -- TODO: add 'Indent'
   modifyGetEgraphM fun egraph => do
   let mut egraph := egraph
-  let canon ← canonicalizeHashCons ehc
+  let canonAndProof ← ExprHashCons.canonicalize ehc
+  let canon := canonAndProof.map Prod.fst
+  let prf := canonAndProof.map Prod.snd
   match egraph.canon2ptr.find? canon with
   | .none =>
       trace[EggTactic.egg] "{←getIndent2}egraph[canon] → .none" -- TODO: add 'Indent'
@@ -300,17 +354,24 @@ def egraphAddHashCons (ehc : ExprHashCons) : EggM Ptr := withIndent do
       -- 1. update `rep2canon`
       egraph := { egraph with rep2canon := egraph.rep2canon.insert canonPtr canon }
       -- 2. update `rep2users`.
-      for used in  (← canon.foldlM pure) do
+      for used in  (← canon.accumM pure) do
         egraph ← egraphAppendUser (userPtr := canonPtr) (usedPtr := used) egraph
       -- 3. update `ptr2ptr`
-      egraph := { egraph with ptr2ptr := egraph.ptr2ptr.insert canonPtr (canonPtr, .rfl) }
+      let obj ← ExprHashCons.toExpr ehc
+      egraph := { egraph with ptr2ptr := egraph.ptr2ptr.insert canonPtr (canonPtr, .rfl obj) }
       -- 4. update `canon2ptr`
       egraph := { egraph with canon2ptr := egraph.canon2ptr.insert canon canonPtr }
       return (canonPtr, egraph)
-  | .some ptr =>
-      trace[EggTactic.egg] "{←getIndent2}egraph[canon] → .some '{ptr}'"
-      trace[EggTactic.egg] "{←getIndent2}<='{ptr}'"
-      return (ptr, egraph)
+  | .some canonPtr =>
+      -- | if the proof that goes from canonical to our pointer is rfl, then we can
+      -- safely reuse the pointer.
+      if prf.isRfl then return (canonPtr, egraph)
+      else
+        trace[EggTactic.egg] "{←getIndent2}egraph[canon] → .some '{canonPtr}'"
+        let newPtr : Ptr := egraph.ptrGensym
+        egraph := { egraph with ptr2ptr := egraph.ptr2ptr.insert newPtr (canonPtr,  EqProof.exprF prf) }
+        trace[EggTactic.egg] "{←getIndent2}<='gensymd pointer {newPtr}'"
+        return (newPtr, egraph)
 
 open Lean Elab Meta Tactic in
 mutual
@@ -345,7 +406,7 @@ mutual -- UNITE
 partial def egraphEnqueueUnite (lhs rhs : Ptr) (lhs2rhs : EqProof) : EggM Unit :=
   withIndent do
     trace[EggTactic.egg] "{← getIndent}∪ lhs:{lhs} rhs:{rhs}=>"
-    trace[EggTactic.egg] "{← getIndent2}lhs2rhs:{lhs2rhs}"
+    trace[EggTactic.egg] "{← getIndent2}lhs2rhs:{← msgM lhs2rhs}"
     modifyEgraphM fun egraph => do
       return { egraph with pending := (lhs, rhs, lhs2rhs) :: egraph.pending }
 
@@ -362,12 +423,12 @@ partial def egraphPropagateGo : EggM Unit :=
     | [] => return egraph
     | (lhs, rhs, lhs2rhs) :: pending => withIndent do
       trace[EggTactic.egg] "{← getIndent}propagate lhs:{lhs} rhs:{rhs}"
-      trace[EggTactic.egg] "{← getIndent}lhs2rhs:{lhs2rhs}=>"
+      trace[EggTactic.egg] "{← getIndent}lhs2rhs:{← msgM lhs2rhs}=>"
       let mut egraph := egraph
       -- 5. pending : List (Ptr × Ptr × EqProof) -- pending updates.
       egraph := { egraph with pending := pending } -- pop
-      let (lhsrep, lhs2lhsrep) ← ptr2repWithProof lhs
-      let (rhsrep, rhs2rhsrep) ← ptr2repWithProof rhs
+      let (lhsrep, lhs2lhsrep) ← Ptr.canonicalizeWithProof lhs
+      let (rhsrep, rhs2rhsrep) ← Ptr.canonicalizeWithProof rhs
       let rhsrep2rhs := rhs2rhsrep.sym
       let rhs2lhs := lhs2rhs.sym
       let rhsrep2lhsrep :=
@@ -375,7 +436,7 @@ partial def egraphPropagateGo : EggM Unit :=
       -- merge rhs into lhs.
       -- 3. ptr2ptr : HashMap Ptr (Ptr × EqProof)
       trace[EggTactic.egg] "{← getIndent2}uniting rhs:{rhsrep} into lhsrep:{lhsrep}"
-      trace[EggTactic.egg] "{← getIndent2}propagate prf: {rhsrep2lhsrep}"
+      trace[EggTactic.egg] "{← getIndent2}propagate prf: {← msgM rhsrep2lhsrep}"
       egraph := { egraph with ptr2ptr := egraph.ptr2ptr.insert rhsrep (lhsrep, rhsrep2lhsrep) }
       -- 1. rep2canon : HashMap RepPtr ExprHashCons -- must be represenattive pointer.
       -- store the canonical element of rhs so we can remap rhscanon to lhsrep
@@ -389,12 +450,12 @@ partial def egraphPropagateGo : EggM Unit :=
       -- TODO: should this be done first?
       for userPtr in rhsUsers do
         trace[EggTactic.egg] "{← getIndent2}userPtr:{userPtr}"
-        let user ← egraphDeref userPtr
+        let user ← Ptr.deref userPtr
         trace[EggTactic.egg] "{← getIndent2}user:{← msgM user}"
         let user' := user.replaceAllUsesWith (old := rhs) (new := lhs)
         -- user' should be canonical, because we got it by derefing a pointer,
         -- and then replacing 'rhs' with 'lhs' (also a canonical pointer.)
-        -- let user' ← canonicalizeHashCons user'
+        -- let user' ← ExprHashCons.canonicalize user'
         match egraph.canon2ptr.find? user' with
         | .none =>
           let _ ← egraphAddHashCons user'
@@ -423,13 +484,13 @@ end -- UNITE
 
 -- saturate the Egraph with respect to an equality, and return
 -- an explanation of why 'lhs' = 'rhs' if possible
-def egraphAddEq (lhs rhs : Expr) (prf : EqProof) : EggM Unit := do
+def egraphAddEq  (prf : EqProof) : EggM Unit := do
   let lhsptr ←
-    match ← egraphAddExpr lhs with
+    match ← egraphAddExpr prf.oldExpr with
     | .none => return ()
     | .some p => pure p
   let rhsptr ←
-    match ← egraphAddExpr rhs with
+    match ← egraphAddExpr prf.newExpr with
     | .none => return ()
     | .some p => pure p
   egraphEnqueueUnite  lhsptr rhsptr prf
@@ -439,12 +500,12 @@ def egraphAddEq (lhs rhs : Expr) (prf : EqProof) : EggM Unit := do
 -- e-class.
 def egraphGetEqProof (lhsPtr rhsPtr : Ptr) : EggM (Option EqProof) := withIndent do
   trace[EggTactic.egg] m!"{←getIndent}getEq {lhsPtr} =?= {rhsPtr}=>"
-  let (lhsPtrRep, lhs2lhsrep) ← ptr2repWithProof lhsPtr
-  let (rhsPtrRep, rhs2rhsrep) ← ptr2repWithProof rhsPtr
+  let (lhsPtrRep, lhs2lhsrep) ← Ptr.canonicalizeWithProof lhsPtr
+  let (rhsPtrRep, rhs2rhsrep) ← Ptr.canonicalizeWithProof rhsPtr
   trace[EggTactic.egg] m!"{←getIndent2}lhs:{lhsPtr} → rep:{lhsPtrRep}"
-  trace[EggTactic.egg] m!"{←getIndent2} prf: '{lhs2lhsrep}'"
+  trace[EggTactic.egg] m!"{←getIndent2} prf: '{← msgM lhs2lhsrep}'"
   trace[EggTactic.egg] m!"{←getIndent2}rhs:{rhsPtr} → rep:{rhsPtrRep}"
-  trace[EggTactic.egg] m!"{←getIndent2} prf: '{rhs2rhsrep}'"
+  trace[EggTactic.egg] m!"{←getIndent2} prf: '{← msgM rhs2rhsrep}'"
   if lhsPtrRep == rhsPtrRep
   then
     trace[EggTactic.egg] m!"{←getIndent2}getEq {lhsPtrRep} == {rhsPtrRep}"
@@ -487,8 +548,8 @@ def runFinisher (prf? : Option Expr) : EggM Unit := withIndent do
 -- ====================
 -- We allow unassigned variables because we use metavars to create 'holes' in the proof.
 open Lean Meta Elab Tactic in
-def runProof (prf : EqProof) :  EggM Unit := withIndent do
-  trace[EggTactic.egg] m!"{←getIndent}runProof '{prf}'=>"
+partial def runProof (prf : EqProof) :  EggM Unit := withIndent do
+  trace[EggTactic.egg] m!"{←getIndent}runProof '{← msgM prf}'=>"
   trace[EggTactic.egg] m!"{←getIndent2}⊢ {← getMainTarget}"
   trace[EggTactic.egg.debug] m!"{←getIndent2}goal:"
   trace[EggTactic.egg.debug] m!"{←getIndent2}{← getMainGoal}"
@@ -499,9 +560,9 @@ def runProof (prf : EqProof) :  EggM Unit := withIndent do
       throwError "goal state is not equality"
     | .some data => pure data
   match prf with
-  | .rfl => withIndent do
+  | .rfl x => withIndent do
      runFinisher .none
-  | .leanProof prf => withIndent do
+  | .leanProof old prf new => withIndent do
      runFinisher prf
   | .sym_ prf => withIndent do
     let symType ← mkEq hypRhs hypLhs
@@ -531,8 +592,26 @@ def runProof (prf : EqProof) :  EggM Unit := withIndent do
     setGoals [mainGoal]
     let mainPrf ← mkEqTrans goalLhsMid goalMidRhs
     runFinisher mainPrf
+  | .exprF p => do
+    let mainGoal ← getMainGoal
+    let mainGoal ← p.foldlM (state := mainGoal) fun mainGoal p => do
+      -- prove the rewrite
+      let pMvar ← mkFreshExprMVar (type? := ← mkEq p.oldExpr p.newExpr)
+      setGoals [pMvar.mvarId!]
+      runProof p
 
-  | .replace oldExpr newExpr prf => do
+      -- rewrite subterm in main goal
+      setGoals [mainGoal]
+      let rewriteResult ← (← getMainGoal).rewrite (← getMainTarget) pMvar
+      match rewriteResult.mvarIds with
+      | [newMainGoal] => do
+        pure newMainGoal
+      | errGoals =>
+          throwError "expected exactly one goal, but instead found {errGoals} as goals"
+    -- main term should be 'rfl'.
+    setGoals [mainGoal]
+    runFinisher .none
+  | .replace oldExpr prf newExpr => do
     -- first create an mvar of type (old = new) and use that to rewrite the rest.
     -- then prove (old = new) by using rewrite via 'prf'.
     let eqType ← mkEq oldExpr newExpr
@@ -609,7 +688,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
         continue
       | .some data => pure data
     trace[EggTactic.egg] m!"+hyp {hyp.userName} : {hyp.type}"
-    egraphAddEq hypLhs hypRhs (EqProof.leanProof <| Expr.fvar hyp.fvarId)
+    egraphAddEq (EqProof.leanProof hypLhs (Expr.fvar hyp.fvarId) hypRhs)
   let goalLhsPtr ←
     match ← egraphAddExpr goalLhs with
     | .some ptr => pure ptr
@@ -626,7 +705,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
 
   match ← egraphGetEqProof goalLhsPtr goalRhsPtr with
   | .some prf =>
-      trace[EggTactic.egg] "found equality proof '{prf}' for '{← getMainTarget}'"
+      trace[EggTactic.egg] "found equality proof '{← msgM prf}' for '{← getMainTarget}'"
       runProof prf
       trace[EggTactic.egg] "finished running proof ∎"
   | .none =>
