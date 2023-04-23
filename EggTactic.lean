@@ -39,6 +39,23 @@ inductive ExprF (α : Type) where
 | lit (lit : Literal)
 deriving BEq, Hashable, Inhabited
 
+-- provides number of occurrences of α in ExprF
+def ExprF.length : ExprF α → Nat
+| .const _ _ => 0
+| .fvar _ => 0
+| .app _ _ => 2
+| .lit _ => 0
+
+def ExprF.get? (ix : Nat) : ExprF α → Option α
+| .const _ _ => .none
+| .fvar _ => .none
+| .app f x =>
+  match ix with
+  | 0 => f
+  | 1 => x
+  | _ => .none
+| .lit _ => .none
+
 
 -- | TODO: write a fusion law so we don't traverse structure twice?
 def ExprF.toExpr : ExprF Expr → Expr
@@ -263,7 +280,7 @@ def ExprF.toMessageDataM (fmt : α → EggM MessageData) : ExprF α → EggM Mes
 instance [ToMessageDataM α] : ToMessageDataM (ExprF α) where
   toMessageDataM := ExprF.toMessageDataM toMessageDataM
 
-instance [ToMessageData α] : ToMessageDataM α where -- low priority
+instance [ToMessageData α] : ToMessageDataM α where
   toMessageDataM := pure ∘ toMessageData
 
 partial def EqProof.toMessageDataM : (precedence : Nat := 0) → EqProof → EggM MessageData
@@ -326,9 +343,9 @@ def ExprHashCons.canonicalize (ehc : ExprHashCons) : EggM ExprPrfHashCons := wit
 
 /-- replace all uses of old with new, and produce a proof witnessing equality.
   TODO: this can be made much faster by only producing the proof when necessary
-  TODO: Also notice that `replaceAllUsesWith` is _just_ canonicalize before we know that
-  `old → new`.
-  Returns if the value was changed, and an annotated proof
+  TODO: Also notice that `replaceAllUsesWith` is _just_ canonicalize
+  before we know that `old → new`.
+  Returns if the value was changed, and an annotated proof.
 -/
 def ExprHashCons.replaceAllUsesWith (old new : Ptr) (old2new : EqProof) (ehc : ExprHashCons) : EggM (Bool × ExprPrfHashCons) := do
   trace[EggTactic.egg] "{←getIndent}rauw {old} {new} {← msgM old2new} {← msgM ehc}=>"
@@ -370,10 +387,12 @@ partial def ExprPrfHashCons.add (canonAndProof : ExprPrfHashCons) : EggM Ptr := 
     let mut egraph := egraph
     match egraph.canon2ptr.find? canon with
     | .none =>
-        trace[EggTactic.egg] "{←getIndent2}egraph[canon] → .none" -- TODO: add 'Indent'
+        -- | -- TODO: add 'Indent'
+        trace[EggTactic.egg] "{←getIndent2}egraph[canon] → .none"
         let canonPtr : Ptr := egraph.ptrGensym
         egraph := { egraph with ptrGensym := egraph.ptrGensym + 1 }
-        trace[EggTactic.egg] "{←getIndent2}egraph[canon] ← {canonPtr}" -- TODO: add 'Indent'
+        -- | -- TODO: add 'Indent'
+        trace[EggTactic.egg] "{←getIndent2}egraph[canon] ← {canonPtr}"
         -- 1. update `rep2canon`
         egraph := { egraph with rep2canon := egraph.rep2canon.insert canonPtr canon }
         -- 2. update `rep2users`.
@@ -584,23 +603,54 @@ def rewriteAt (mvarId : MVarId) (e : Expr) (heq : Expr)
       cont heq heqType
 
 
+#print Eq.ndrec
+-- ⊢ {α : Sort u2} → {a : α} → {motive : α → Sort u1} → motive a → {b : α} → a = b → motive b
+def eq2 (f : ℕ → ℕ) (x y : ℕ) (H : x = y) : f x = f y :=
+  Eq.ndrec (motive := fun y => f x = f y) (rfl : f x = f x) H
+
+def eq3 (f : ℕ → ℕ → ℕ) (x y z w: ℕ) (H : x = y) (K : z = w): f x z = f y w :=
+  Eq.ndrec
+    (motive := fun y => f x z = f y w)
+    (Eq.ndrec  -- f x z = f x w
+      (motive := fun w => f x z = f x w)
+      (rfl : f x z = f x z) -- f x z = f x z
+      K
+    )
+    H
+
+#print eq3.proof_1
+
+-- theorem Eq.subst {α : Sort u} {motive : α → Prop} {a b : α} (h₁ : Eq a b) (h₂ : motive a) : motive b :=
+--   Eq.ndrec h₂ h₁
+
+#print congrFun
+#print congrArg
+
+def eq2congr (f : ℕ → ℕ) (x y : ℕ) (H : x = y) : f x = f y :=
+     (congrArg f H)
+
+
+
 open Lean Meta Elab Tactic in
 partial def EqProof.toExpr (prf : EqProof) : EggM Expr := withIndent do
   trace[EggTactic.egg] m!"{←getIndent}toExpr '{← msgM prf}'=>"
   trace[EggTactic.egg] m!"{←getIndent2}⊢ {prf.oldExpr} = {prf.newExpr}"
   let goalTy ← mkEq prf.oldExpr prf.newExpr
   match prf with
-  | .rfl x =>
-      mkEqRefl prf.oldExpr
+  | .rfl obj =>
+      mkEqRefl obj
   | .sym_ p =>
      mkEqSymm (← toExpr p)
-  | .leanProof old prf new =>
+  | .leanProof _old prf _new =>
     return prf
   | .sequence_ prf1 prf2 => withIndent do
     mkEqTrans (← toExpr prf1) (← toExpr prf2)
   | .exprF prfF =>
-    trace[EggTactic.egg] m!"do not know how to run exprF: {← msgM prfF}"
-    throwError m!"do not know how to run exprF: {← msgM prfF}"
+    match prfF with
+    | .const _declName _us => mkEqRefl prf.oldExpr
+    | .fvar _fvarId => mkEqRefl prf.oldExpr
+    | .app prff prfarg => mkCongr (← prff.toExpr) (←prfarg.toExpr)
+    | .lit _l => mkEqRefl prf.oldExpr
 
 
 
