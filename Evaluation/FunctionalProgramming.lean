@@ -1,4 +1,5 @@
 import EggTactic
+import EggTactic.ExtractLean
 namespace Test
 
 
@@ -29,7 +30,9 @@ instance {α : Type _} : HAppend (List α) (List α) (List α) where hAppend := 
 
 theorem append_assoc (as bs cs : List α) : (as ++ bs) ++ cs = as ++ (bs ++ cs) := by
   induction as with
-  | nil => eggxplosion [append_nil, append_cons]
+  | nil =>
+    extract Test.append_nil -- propositional equality
+    eggxplosion [append_nil, append_cons]
   | cons a as ih => eggxplosion [ih, append_nil, append_cons] -- could this also be automated?
   -- <;> eggxplosion
 

@@ -3,6 +3,8 @@ import Mathbin.Algebra.Module.Basic
 import Mathbin.Data.Real.Basic
 import Mathbin.Data.Polynomial.Basic
 import Mathbin.RingTheory.PowerSeries.Basic
+
+#check LE
 -- import Mathlib.Data.Polynomial.Taylor -- Taylor expansions but just for polynomials
 
 -- From generatingfuctionology 1.1:
@@ -32,7 +34,10 @@ abbrev R3 := Real -- Module Real (Fin 3 → Real)
 variable (di r : R3)
 noncomputable def ri : R3 := r - di
 
--- 1/rᵢ = 1/|r - dᵢ| =  1/((r - dᵢ)*(r - dᵢ))^(1/2) = 1/(r² - 2 r * dᵢ + dᵢ²)^(1/2) = 1/r * 1/(1 + (dᵢ² - 2 r ⬝ dᵢ) / r²)^(1/2)
+-- 1/rᵢ = 1/|r - dᵢ|
+-- = 1/((r - dᵢ)*(r - dᵢ))^(1/2)
+-- = 1/(r² - 2 r * dᵢ + dᵢ²)^(1/2)
+-- = 1/r * 1/(1 + (dᵢ² - 2 r ⬝ dᵢ) / r²)^(1/2)
 --
 theorem first_reduction : 1/ri = (1/r) * 1/(1 + ((di^2 - (2 * r) * di) / r^2))^(1/2) := by sorry
 

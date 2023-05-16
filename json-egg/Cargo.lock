@@ -33,8 +33,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "egg"
-version = "0.9.0"
-source = "git+https://github.com/egraphs-good/egg.git?rev=e19a18f#e19a18f60a6f1d3f5c466b37c0fe4d3cd69e550e"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad232a21846e5a5f72b8ca53cb959d4cb4ad864361825a3bbc5e5fdc0674c41b"
 dependencies = [
  "env_logger 0.9.0",
  "fxhash",
@@ -56,6 +57,7 @@ version = "0.2.2"
 dependencies = [
  "egg",
  "env_logger 0.7.1",
+ "fxhash",
  "indexmap",
  "libc",
  "log",

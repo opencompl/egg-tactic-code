@@ -1,4 +1,5 @@
 import EggTactic
+import EggTactic.ExtractLean
 
 set_option trace.EggTactic.egg true
 theorem inv_inv
@@ -13,6 +14,8 @@ theorem inv_inv
   (invRight: forall (a: G), mul a (inv a) = one)
   (x: G)
   : (inv (inv x) = x) := by
+  try extract assocMul
+  try extract x
   eggxplosion [assocMul, invLeft, mulOne, oneMul, invRight]
 
 theorem inv_mul_cancel_left
