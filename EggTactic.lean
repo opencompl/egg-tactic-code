@@ -712,15 +712,15 @@ def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanatio
 def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :=
   goalMVar.withContext do
     trace[EggTactic.egg] " addNamedRewrites {goalMVar.name} {rewriteNames.map ToString.toString}"
+    let mut rewrites := rewriteNames
     for decl in (← getLCtx) do
     -- TODO: find a way to not have to use strings, see how 'simp' does this.
-    if !((rewriteNames.map fun ident => ident.getId ).contains decl.userName)
-      then
-        trace[EggTactic.egg] s!"**cannot find local declaration {decl.userName}"
-        continue
+    if !((rewrites.map fun ident => ident.getId ).contains decl.userName)
+      then continue
     trace[EggTactic.egg] (s!"**processing local declaration {decl.userName}" ++
     s!":= {decl.toExpr} : {← inferType decl.toExpr}")
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
+    rewrites := rewrites.dropWhile fun rw => toString rw == decl.userName
 
 declare_syntax_cat eggconfigval
 declare_syntax_cat eggconfig
