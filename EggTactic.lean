@@ -600,7 +600,7 @@ def eggAddExprAsRewrite (goal: MVarId) (rw: Expr) (ty: Expr): EggM Unit := do
 
 -- Add all equalities from the local context
 def addAllLocalContextEqualities (goal: MVarId) (goals: List MVarId): EggM Unit :=
-  withMVarContext goal do
+  goal.withContext do
     trace[EggTactic.egg] "goals: {goals.map fun g => g.name}"
     for decl in (← getLCtx) do
       if decl.toExpr.isMVar && goals.contains (decl.toExpr.mvarId!)
@@ -710,12 +710,14 @@ def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanatio
 
 -- Add rewrites with known names 'rewriteNames' from the local context of 'goalMVar'
 def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :=
-  withMVarContext goalMVar do
+  goalMVar.withContext do
     trace[EggTactic.egg] " addNamedRewrites {goalMVar.name} {rewriteNames.map ToString.toString}"
     for decl in (← getLCtx) do
     -- TODO: find a way to not have to use strings, see how 'simp' does this.
     if !((rewriteNames.map fun ident => ident.getId ).contains decl.userName)
-    then continue
+      then
+        trace[EggTactic.egg] s!"**cannot find local declaration {decl.userName}"
+        continue
     trace[EggTactic.egg] (s!"**processing local declaration {decl.userName}" ++
     s!":= {decl.toExpr} : {← inferType decl.toExpr}")
     eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
