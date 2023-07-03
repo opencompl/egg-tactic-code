@@ -682,13 +682,13 @@ def simplifyRequest (lhs rhs : Sexp) (rewrites : List EggRewrite)
 def parseEggResponse (goal: MVarId) (varMapping : VariableMapping) (responseString: String) :
   MetaM (List Eggxplanation) := do
     let outJson : Json <- match Json.parse responseString with
-      | Except.error e => throwTacticEx `eggxplosion goal e
+      | Except.error e => throwTacticEx `egg goal e
       | Except.ok j => pure j
     trace[EggTactic.egg] ("10)stdout as json:\n" ++ (toString outJson))
     let responseType := (outJson.getObjValD "response").getStr!
     trace[EggTactic.egg] ("11)stdout response: |" ++ responseType ++ "|")
     if responseType == "error"
-    then throwTacticEx `eggxplosion goal (toString outJson)
+    then throwTacticEx `egg goal (toString outJson)
     else
       trace[EggTactic.egg] "12) Creating explanation..."
       -- This whole thing is in an Except beacause everything in Json
@@ -712,15 +712,23 @@ def runEggRequest (goal: MVarId) (request: EggRequest): MetaM (List Eggxplanatio
 def addNamedRewrites (goalMVar: MVarId)  (rewriteNames: List Ident): EggM Unit :=
   goalMVar.withContext do
     trace[EggTactic.egg] " addNamedRewrites {goalMVar.name} {rewriteNames.map ToString.toString}"
-    let mut rewrites := rewriteNames
+    let mut rewrites := rewriteNames.map (·.getId)
     for decl in (← getLCtx) do
     -- TODO: find a way to not have to use strings, see how 'simp' does this.
-    if !((rewrites.map fun ident => ident.getId ).contains decl.userName)
-      then continue
-    trace[EggTactic.egg] (s!"**processing local declaration {decl.userName}" ++
-    s!":= {decl.toExpr} : {← inferType decl.toExpr}")
-    eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
-    rewrites := rewrites.dropWhile fun rw => toString rw == decl.userName
+      if !((rewrites.map fun ident => ident).contains decl.userName)
+        then continue
+      trace[EggTactic.egg] (s!"**processing local declaration {decl.userName}" ++
+      s!":= {decl.toExpr} : {← inferType decl.toExpr}")
+      eggAddExprAsRewrite  goalMVar decl.toExpr (← inferType decl.toExpr)
+      rewrites := List.removeAll rewrites [decl.userName]
+    for rwName in rewrites do
+      if let some rw := (← getEnv).find? rwName then
+        trace[EggTactic.egg] (s!"**processing global declaration {rw.name}" ++
+        s!":= {rw.name} : {← inferType rw.type}")
+        -- TODO: get universe levels right here...
+        eggAddExprAsRewrite  goalMVar (Expr.const rw.name []) (← inferType rw.value!)
+        continue
+      throwError "rewrite '{rwName}' not found in local context"
 
 declare_syntax_cat eggconfigval
 declare_syntax_cat eggconfig
@@ -739,14 +747,14 @@ def Lean.TSyntax.updateEggConfig : TSyntax `eggconfigval → EggConfig → EggCo
   | `(eggconfigval| dump ) =>  λ cfg => { cfg with dumpGraph := true }
   | `(eggconfigval| simplify ) =>  λ cfg => { cfg with simplifyExprs := true }
   | `(eggconfigval| (timeLimit := $n:num) ) => λ cfg => { cfg with time := n.getNat }
-  | stx => panic! s!"unknown eggxplosion configuration syntax {stx}"
+  | stx => panic! s!"unknown egg configuration syntax {stx}"
 
 partial def Lean.TSyntax.getEggConfig : TSyntax `eggconfig → EggConfig
   | `(eggconfig| $v:eggconfigval $r:eggconfig) => v.updateEggConfig r.getEggConfig
   | `(eggconfig| $v:eggconfigval ) => v.updateEggConfig default
-  | _ => panic! "unknown eggxplosion config syntax"
+  | _ => panic! "unknown egg config syntax"
 
-elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withMainContext do
+elab "egg" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withMainContext do
   trace[EggTactic.egg] (s!"0) Running Egg on '{← getMainTarget}'")
   let decls : List LocalDecl := (← getLCtx).decls.toList.filter Option.isSome |>.map Option.get!
   let idsnames := decls.map λ decl => (repr decl.fvarId, decl.userName)
@@ -789,7 +797,7 @@ elab "eggxplosion" "[" rewriteNames:ident,* "]" c:(eggconfig)? : tactic => withM
     let eggRewrite <-
       match rewrites.find? (fun rw => rw.name == e.rule) with
       | .some rw => pure rw
-      |  .none => throwTacticEx `eggxplosion (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
+      |  .none => throwTacticEx `egg (<- getMainGoal) (f!"unknown local declaration {e.rule} in rewrite {e}")
     trace[EggTactic.egg] (s!"14.6) found eggRewrite {eggRewrite}\n\twith rw {eggRewrite.rw} : {<- inferType eggRewrite.rw}")
     trace[EggTactic.egg] (s!"15) applying rewrite expression eggRewrite: {eggRewrite} to target: {<- getMainTarget}")
     -- let rwType <- e.instantiateTarget eggRewrite.rwType

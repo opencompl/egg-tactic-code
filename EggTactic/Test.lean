@@ -11,7 +11,7 @@ set_option trace.EggTactic.egg true
 
 theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by {
   intros;
-  eggxplosion [H]
+  egg [H]
 }
 
 #print testSuccess0
@@ -20,12 +20,12 @@ theorem testSuccess0 (anat: Nat) (bnat: Nat) (H: anat = bnat): anat = bnat := by
 set_option pp.analyze true in
 theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint): bint = eint := by
-  --  eggxplosion [not_rewrite]
-  --  eggxplosion [rewrite_wrong_type]
+  --  egg [not_rewrite]
+  --  egg [rewrite_wrong_type]
   -- rewrite [b_eq_d]
   -- rewrite [d_eq_e]
   -- rfl
-  eggxplosion [b_eq_d, d_eq_e]
+  egg [b_eq_d, d_eq_e]
 
 
 #print testSuccess
@@ -33,7 +33,7 @@ theorem testSuccess (anat: Nat) (bint: Int) (cnat: Nat)
 
 theorem testSuccess0Symm (anat: Nat) (bnat: Nat) (H: bnat = anat): anat = bnat := by {
   intros;
-  eggxplosion [H]
+  egg [H]
 }
 
 #print testSuccess0Symm
@@ -49,7 +49,7 @@ theorem testSuccessRev : ∀ (anat: Nat) (bint: Int) (cnat: Nat)
   (dint: Int) (eint: Int) (a_eq_a: anat = anat) (b_eq_d: bint = dint) (d_eq_e: dint = eint),
   eint = bint := by
    intros a b c d e aeqa beqd deqe
-   eggxplosion [beqd, deqe]
+   egg [beqd, deqe]
 
 #print testSuccessRev
 
@@ -66,7 +66,7 @@ theorem testManualInstantiation
   -- @bollu's hypothesis is that we need to force
   -- metavariable resolution at the value and type level
   -- with a couple 'reduce's.
-  eggxplosion [gh, gk]
+  egg [gh, gk]
 
 #print testManualInstantiation
 -/
@@ -76,16 +76,15 @@ theorem assoc_instantiate(G: Type)
   (mul: G → G → G)
   (assocMul: forall (a b c: G), (mul (mul a b) c) = mul a (mul b c))
   (x y z: G) : mul x (mul y z) = mul (mul x y) z := by {
-  eggxplosion [assocMul]
+  egg [assocMul]
 }
 
 #print assoc_instantiate
 
-
 /-
 theorem testGoalNotEqualityMustFail : ∀ (a: Nat) (b: Int) (c: Nat) , Nat := by
  intros a b c
- eggxplosion []
+ egg []
  sorry
 -/
 
@@ -117,7 +116,7 @@ theorem inv_mul_cancel_left (G: Type)
   (invRight: forall (a: G), one = mul a (inv a))
   --(invRightX: one = mul x (inv x))
   : (inv (inv x) = x) := by
-  eggxplosion [assocMul, invLeft, mulOne, invRight] (timeLimit := 3)
+  egg [assocMul, invLeft, mulOne, invRight] (timeLimit := 3)
 
 #print inv_mul_cancel_left
 
@@ -150,8 +149,21 @@ theorem testInstantiation
    -- @andres: I strongly suspect the toExplode
    -- array somehow leaking in `bvars` on accident. A cursory glance at it did not show me what it
    -- does when it doesn't explode a variable; I would have expected it to instantiate an `mvar`.
-   eggxplosion [group_inv];
+   egg [group_inv];
 }
 
 
 #print testInstantiation
+
+
+def G : Type := sorry
+def mul : G → G → G := sorry 
+def assocMul : forall (a b c: G), (mul (mul a b) c) = mul a (mul b c) := sorry
+
+theorem assoc_instantiate_global 
+  (x y z: G) : mul x (mul y z) = mul (mul x y) z := by 
+  egg [assocMul]
+
+#print assoc_instantiate_global 
+
+
